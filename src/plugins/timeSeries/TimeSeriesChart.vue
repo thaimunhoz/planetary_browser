@@ -40,6 +40,9 @@ function flagColour(value: string): string {
   return sharedFlagColour(value, props.flagLabels, props.flags)
 }
 
+function seriesColour(): string {
+  return props.unit === 'NDMI' ? cssVar('--accent-2') : cssVar('--accent')
+}
 
 function getSize(): { width: number; height: number } {
   const el = containerRef.value
@@ -123,10 +126,10 @@ function createChart() {
       {},
       {
         label: props.unit,
-        stroke: cssVar('--accent'),
+        stroke: seriesColour(),
         width: 0,
         paths: () => null,
-        points: { show: true, size: 8, fill: cssVar('--accent') },
+        points: { show: true, size: 8, fill: seriesColour() },
       },
     ],
     hooks: {

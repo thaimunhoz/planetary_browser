@@ -1,6 +1,6 @@
-# <img align="right" width="150" height="150" style="margin: 20px;" src="public/favicon.svg"> Planetary Computer Time-series Browser
+# <img align="right" width="150" height="150" style="margin: 20px;" src="public/favicon.svg"> TerraPulse
 
-This project aims to make labelling of Sentinel-2 time-series easily accessible by taking advantage of Microsoft Planetary Computer.
+TerraPulse is a dark, map-first Sentinel-2 time-series browser powered by Microsoft Planetary Computer.
 
 The design goals of the project are the following:
 

@@ -75,7 +75,7 @@ export function deepEqual(a: unknown, b: unknown): boolean {
 export function parseUrl(search: string): ParsedUrl {
   const p = new URLSearchParams(search)
 
-  const lon      = p.has('lon') ? parseFloat(p.get('lon')!) : undefined
+  const lon      = p.has('lon') ? parseFloat(p.get('lon')!) : p.has('lng') ? parseFloat(p.get('lng')!) : undefined
   const lat      = p.has('lat') ? parseFloat(p.get('lat')!) : undefined
   const start    = p.get('start')    ?? undefined
   const end      = p.get('end')      ?? undefined

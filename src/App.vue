@@ -1,19 +1,22 @@
 <template>
-  <HomeView v-if="showHome" />
-  <div v-else class="app-shell">
-    <AppToolbar @open-settings="showSettings = true" @open-shortcuts="showShortcuts = true" />
+  <HomeView v-if="!showWorkspace" @open-workspace="openWorkspace" />
+  <div v-else class="workspace-overlay">
+    <div class="workspace-shell">
+      <AppToolbar @open-settings="showSettings = true" @open-shortcuts="showShortcuts = true" />
+      <button class="workspace-close" title="Back to map" @click="closeWorkspace">Back to map</button>
 
-    <div class="dock-host">
-      <DockviewVue
-        :theme="dockviewTheme"
-        :popout-url="popoutUrl"
-        right-header-actions-component="panelSettingsButton"
-        @ready="onDockviewReady"
-      />
+      <div class="dock-host">
+        <DockviewVue
+          :theme="dockviewTheme"
+          :popout-url="popoutUrl"
+          right-header-actions-component="panelSettingsButton"
+          @ready="onDockviewReady"
+        />
+      </div>
+
+      <SettingsModal v-if="showSettings" @close="showSettings = false" />
+      <ShortcutsModal v-if="showShortcuts" @close="showShortcuts = false" />
     </div>
-
-    <SettingsModal v-if="showSettings" @close="showSettings = false" />
-    <ShortcutsModal v-if="showShortcuts" @close="showShortcuts = false" />
   </div>
 </template>
 
@@ -54,13 +57,13 @@ const layoutStore = useLayoutStore()
 const campaignStore = useCampaignStore()
 const showSettings = ref(false)
 const showShortcuts = ref(false)
+const showWorkspace = ref(new URLSearchParams(window.location.search).get('workspace') === '1')
 
 useKeyboardShortcuts(() => { showShortcuts.value = !showShortcuts.value })
 
 // Parse URL synchronously during setup, before watchEffect first fires.
 // Campaign data was already loaded from IDB (or ephemerally) by main.ts before mount.
 const parsed = parseUrl(window.location.search)
-const showHome = parsed.lon == null && parsed.lat == null && !parsed.schema?.campaign
 if (parsed.lon != null && parsed.lat != null) {
   appStore.setCoordinate(parsed.lon, parsed.lat)
 }
@@ -94,7 +97,7 @@ watch(() => campaignStore.schema?.flagLabels, (fl) => {
 })
 
 watchEffect(() => {
-  if (showHome) return
+  if (!showWorkspace.value) return
   // Build sample: sample_id + flags + form field values
   const sampleId = campaignStore.currentSampleId
 
@@ -124,7 +127,7 @@ watchEffect(() => {
     sample:   Object.keys(sampleObj).length ? sampleObj : undefined,
     schema:   schemaObj,
   })
-  history.replaceState(null, '', url)
+  history.replaceState(null, '', `${url}&workspace=1`)
 })
 
 let saveTimer = 0
@@ -148,6 +151,20 @@ function onDockviewReady(event: DockviewReadyEvent) {
     (window as unknown as Record<string, unknown>).__dockview = event.api
   }
 }
+
+function openWorkspace() {
+  showWorkspace.value = true
+  const url = new URL(window.location.href)
+  url.searchParams.set('workspace', '1')
+  history.replaceState(null, '', url.toString())
+}
+
+function closeWorkspace() {
+  showWorkspace.value = false
+  const url = new URL(window.location.href)
+  url.searchParams.delete('workspace')
+  history.replaceState(null, '', `${url.pathname}${url.search}${url.hash}`)
+}
 </script>
 
 <style>
@@ -165,17 +182,45 @@ body,
   height: 100%;
   width: 100%;
   overflow: hidden;
-  background: var(--bg);
-  color: var(--text);
-  font-family: system-ui, -apple-system, sans-serif;
+  background: var(--bg-base);
+  color: var(--text-primary);
+  font-family: var(--font-ui);
 }
 </style>
 
 <style scoped>
-.app-shell {
+.workspace-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 2000;
+  background: var(--bg-base);
+}
+
+.workspace-shell {
   display: flex;
   flex-direction: column;
   height: 100%;
+}
+
+.workspace-close {
+  position: fixed;
+  top: 6px;
+  right: 12px;
+  z-index: 2300;
+  height: 28px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--bg-panel-2);
+  color: var(--text-primary);
+  cursor: pointer;
+  font-family: var(--font-ui);
+  font-size: 12px;
+  padding: 0 10px;
+}
+
+.workspace-close:hover {
+  border-color: var(--accent);
+  color: var(--accent);
 }
 
 .dock-host {
@@ -194,10 +239,10 @@ body,
 
 /* ── Dark Replit theme ─────────────────────────────────────────── */
 :global(.dockview-theme-replit-dark) {
-  --dv-paneview-active-outline-color: #C0CAB3;
+  --dv-paneview-active-outline-color: #36E2A4;
   --dv-tabs-and-actions-container-font-size: 13px;
   --dv-tabs-and-actions-container-height: 35px;
-  --dv-drag-over-background-color: rgba(192, 202, 179, 0.15);
+  --dv-drag-over-background-color: rgba(54, 226, 164, 0.15);
   --dv-drag-over-border-color: transparent;
   --dv-tabs-container-scrollbar-color: #3c4140;
   --dv-icon-hover-background-color: rgba(67, 72, 70, 0.5);
@@ -207,27 +252,27 @@ body,
   --dv-border-radius: 0px;
   --dv-tab-margin: 0;
   --dv-sash-color: #1a1b1b;
-  --dv-active-sash-color: #C0CAB3;
+  --dv-active-sash-color: #36E2A4;
   --dv-active-sash-transition-duration: 0.1s;
   --dv-active-sash-transition-delay: 0.5s;
 
   box-sizing: border-box;
   padding: 10px;
-  background-color: #312f2f;
+  background-color: var(--bg-base);
 
-  --dv-group-view-background-color: #312f2f;
-  --dv-tabs-and-actions-container-background-color: #121010;
-  --dv-activegroup-visiblepanel-tab-background-color: #2b2929;
-  --dv-activegroup-hiddenpanel-tab-background-color: #121010;
-  --dv-inactivegroup-visiblepanel-tab-background-color: #252323;
-  --dv-inactivegroup-hiddenpanel-tab-background-color: #121010;
+  --dv-group-view-background-color: var(--bg-base);
+  --dv-tabs-and-actions-container-background-color: var(--bg-panel);
+  --dv-activegroup-visiblepanel-tab-background-color: var(--bg-panel-2);
+  --dv-activegroup-hiddenpanel-tab-background-color: var(--bg-panel);
+  --dv-inactivegroup-visiblepanel-tab-background-color: #101724;
+  --dv-inactivegroup-hiddenpanel-tab-background-color: var(--bg-panel);
   --dv-tab-divider-color: transparent;
-  --dv-activegroup-visiblepanel-tab-color: #E5E2E1;
-  --dv-activegroup-hiddenpanel-tab-color: #8D928F;
-  --dv-inactivegroup-visiblepanel-tab-color: #C3C7C5;
-  --dv-inactivegroup-hiddenpanel-tab-color: #8D928F;
+  --dv-activegroup-visiblepanel-tab-color: var(--text-primary);
+  --dv-activegroup-hiddenpanel-tab-color: var(--text-muted);
+  --dv-inactivegroup-visiblepanel-tab-color: var(--text-secondary);
+  --dv-inactivegroup-hiddenpanel-tab-color: var(--text-muted);
   --dv-separator-border: transparent;
-  --dv-paneview-header-border-color: #3c4140;
+  --dv-paneview-header-border-color: var(--border);
 }
 
 :global(.dockview-theme-replit-dark .dv-resize-container) {
@@ -255,11 +300,11 @@ body,
 }
 
 :global(.dockview-theme-replit-dark .dv-groupview .dv-tabs-and-actions-container .dv-tab:hover) {
-  background-color: #434846 !important;
+  background-color: var(--bg-panel-2) !important;
 }
 
 :global(.dockview-theme-replit-dark .dv-groupview .dv-content-container) {
-  background-color: #1f1d1d;
+  background-color: var(--bg-base);
 }
 
 :global(.dockview-theme-replit-dark .dv-groupview.dv-active-group) {

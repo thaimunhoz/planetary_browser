@@ -8,7 +8,7 @@ const fiveYearsAgo = new Date(Date.now() - 5 * 365.25 * 24 * 3600 * 1000).toISOS
 export const useAppStore = defineStore('app', () => {
   const CYCLE: Array<'system' | 'dark' | 'light'> = ['system', 'dark', 'light']
   const stored = localStorage.getItem('theme') as 'system' | 'dark' | 'light' | null
-  const theme = ref<'system' | 'dark' | 'light'>(stored ?? 'system')
+  const theme = ref<'system' | 'dark' | 'light'>(stored ?? 'dark')
 
   const mq = window.matchMedia('(prefers-color-scheme: dark)')
   const systemPrefersDark = ref(mq.matches)

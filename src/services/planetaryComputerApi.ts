@@ -60,6 +60,14 @@ function itemCloudCover(item: PcStacItem): number {
   return item.properties['eo:cloud_cover'] ?? Number.POSITIVE_INFINITY
 }
 
+export function stacItemDate(item: PcStacItem): string {
+  return itemDate(item)
+}
+
+export function stacItemCloudCover(item: PcStacItem): number {
+  return itemCloudCover(item)
+}
+
 async function fetchJson<T>(url: string): Promise<T> {
   const response = await fetch(url)
   if (!response.ok) {
@@ -198,10 +206,7 @@ export async function findBestMapItem(
   })[0] ?? null
 }
 
-export async function getTileUrl(item: PcStacItem, layerId: string): Promise<string> {
-  const params = new URLSearchParams()
-  params.set('collection', item.collection || S2_COLLECTION)
-  params.set('item', item.id)
+function applyLayerParams(params: URLSearchParams, layerId: string) {
   params.set('format', 'png')
 
   switch (layerId) {
@@ -242,9 +247,29 @@ export async function getTileUrl(item: PcStacItem, layerId: string): Promise<str
       params.set('nodata', '0')
       break
   }
+}
+
+function itemParams(item: PcStacItem): URLSearchParams {
+  const params = new URLSearchParams()
+  params.set('collection', item.collection || S2_COLLECTION)
+  params.set('item', item.id)
+  return params
+}
+
+export async function getTileUrl(item: PcStacItem, layerId: string): Promise<string> {
+  const params = itemParams(item)
+  applyLayerParams(params, layerId)
 
   const tileJson = await fetchJson<TileJsonResponse>(`${PC_TILER_BASE}/item/tilejson.json?${params.toString()}`)
   const tile = tileJson.tiles[0]
   if (!tile) throw new Error('Planetary Computer returned no tile URL for this item.')
   return tile
+}
+
+export function getPreviewUrl(item: PcStacItem, layerId: string): string {
+  const params = itemParams(item)
+  applyLayerParams(params, layerId)
+  params.set('width', '512')
+  params.set('height', '512')
+  return `${PC_TILER_BASE}/item/preview.png?${params.toString()}`
 }

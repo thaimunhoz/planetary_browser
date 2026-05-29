@@ -1,265 +1,1271 @@
 <template>
-  <div class="home" :data-theme="appStore.effectiveTheme === 'light' ? 'light' : undefined">
-    <aside class="sidebar">
-      <div class="brand">
-        <img src="/favicon.svg" alt="Logo" class="logo" />
+  <div class="tp-shell">
+    <header class="topbar">
+      <div class="brand" aria-label="TerraPulse">
+        <svg viewBox="0 0 32 32" aria-hidden="true">
+          <circle cx="16" cy="16" r="6.5" fill="var(--accent)" />
+          <ellipse cx="16" cy="16" rx="13.5" ry="6" stroke="var(--accent)" stroke-width="1.6" opacity=".82" transform="rotate(-28 16 16)" />
+          <circle cx="27" cy="9.5" r="1.8" fill="var(--accent-2)" />
+        </svg>
         <div>
-          <h1 class="app-title">Planetary Computer TS Browser</h1>
-          <p class="app-sub">Sentinel-2 Time-Series Explorer</p>
+          <div class="brand-name">Terra<span>Pulse</span></div>
+          <div class="brand-sub">Sentinel-2 time machine</div>
         </div>
       </div>
 
-      <section class="card">
-        <div class="card-header">
-          <span class="card-title">Data source</span>
-          <span class="badge badge-ok">Ready</span>
-        </div>
-        <p class="hint connected-hint">
-          Sentinel-2 L2A imagery and point values are loaded directly from Microsoft Planetary Computer.
-        </p>
-      </section>
+      <form class="search" @submit.prevent="runSearch">
+        <span class="search-icon">⌕</span>
+        <input
+          ref="searchInput"
+          v-model="searchQuery"
+          type="search"
+          placeholder="Search place or lat,lng"
+          aria-label="Search a place or coordinates"
+        />
+      </form>
 
-      <section class="card">
-        <div class="card-title">Date range</div>
-        <div class="date-row">
-          <div class="field">
-            <label>Start</label>
-            <input v-model="startDate" type="date" />
+      <div class="date-range" ref="datePopoverRef">
+        <button class="date-pill" type="button" @click="dateOpen = !dateOpen">
+          <span class="pill-icon">cal</span>
+          <span class="mono">{{ startDate }} -> {{ endDate }}</span>
+          <span>⌄</span>
+        </button>
+        <div v-if="dateOpen" class="date-popover">
+          <div class="popover-grid">
+            <div class="presets">
+              <div class="pop-label">Range</div>
+              <button
+                v-for="preset in presets"
+                :key="preset.id"
+                type="button"
+                class="preset"
+                :class="{ active: activePreset === preset.id }"
+                @click="applyPreset(preset.id)"
+              >
+                <span>{{ preset.label }}</span>
+                <span class="mono">{{ preset.short }}</span>
+              </button>
+            </div>
+            <div class="custom-dates">
+              <div class="pop-label">Custom</div>
+              <label>
+                <span>Start</span>
+                <input v-model="pendingStart" type="date" min="2015-06-23" :max="pendingEnd" />
+              </label>
+              <label>
+                <span>End</span>
+                <input v-model="pendingEnd" type="date" :min="pendingStart" />
+              </label>
+            </div>
           </div>
-          <div class="field">
-            <label>End</label>
-            <input v-model="endDate" type="date" />
+          <div class="pop-actions">
+            <button type="button" @click="resetPending">Clear</button>
+            <button type="button" class="primary" @click="applyCustom">Apply</button>
           </div>
         </div>
-      </section>
+      </div>
 
-      <section class="card coord-card">
-        <div class="card-title">Location</div>
-        <p v-if="picked" class="coord-text">{{ picked[1].toFixed(5) }} deg N, {{ picked[0].toFixed(5) }} deg E</p>
-        <p v-else class="hint">Click on the map to choose a location.</p>
-      </section>
+      <div class="top-actions">
+        <div class="ready"><span></span>Ready</div>
+        <button class="icon-btn" title="Keyboard shortcuts" @click="showHelp = !showHelp">?</button>
+        <button class="icon-btn" title="Theme" @click="appStore.toggleTheme()">{{ appStore.theme === 'dark' ? 'D' : 'A' }}</button>
+        <button class="icon-btn" title="Share link" @click="copyShareLink">link</button>
+      </div>
+    </header>
 
-      <button class="btn btn-accent btn-full btn-open" :disabled="!picked" @click="open">
-        Open in Browser
-      </button>
-    </aside>
+    <nav class="tool-rail" aria-label="Map tools">
+      <button class="tool active" title="Inspect point">⌖</button>
+      <button class="tool" title="Draw AOI">▱</button>
+      <button class="tool" title="Search" @click="focusSearch">⌕</button>
+      <button class="tool" title="Layers">▤</button>
+      <button class="tool settings" title="Settings" @click="showSource = true">⚙</button>
+    </nav>
 
-    <div ref="mapEl" class="map"></div>
+    <main class="map-stage">
+      <div ref="mapEl" class="map"></div>
+      <div v-if="!inspectorOpen" class="map-hint">Click anywhere on the map to analyze a Sentinel-2 time series</div>
+
+      <div class="basemap-switcher">
+        <button
+          v-for="b in basemaps"
+          :key="b.id"
+          :class="{ active: activeBasemap === b.id }"
+          @click="setBasemap(b.id)"
+        >
+          {{ b.label }}
+        </button>
+      </div>
+
+      <aside class="inspector" :class="{ open: inspectorOpen }" aria-label="Location inspector">
+        <div class="inspector-head">
+          <div>
+            <div class="place">{{ placeName }}</div>
+            <div class="coord mono">{{ formattedCoordinate }}</div>
+            <div class="meta">{{ sceneCountLabel }}</div>
+          </div>
+          <div class="head-actions">
+            <button class="icon-btn" title="Copy link" @click="copyShareLink">link</button>
+            <button class="icon-btn" title="Close inspector" @click="closeInspector">x</button>
+          </div>
+        </div>
+
+        <div class="inspector-body">
+          <section class="panel-card">
+            <h3>
+              Imagery
+              <span class="segmented">
+                <button :class="{ active: previewLayer === 'TRUE-COLOR' }" @click="previewLayer = 'TRUE-COLOR'">True</button>
+                <button :class="{ active: previewLayer === 'FALSE-COLOR' }" @click="previewLayer = 'FALSE-COLOR'">False</button>
+              </span>
+            </h3>
+            <div v-if="sceneLoading" class="image-skeleton"></div>
+            <div v-else-if="previewUrl" class="preview-tile">
+              <img :src="previewUrl" alt="Sentinel-2 preview for the selected location" />
+              <span class="caption mono">{{ selectedSceneDate }} · cloud {{ selectedSceneCloud }}</span>
+            </div>
+            <p v-else class="empty">No Sentinel-2 scenes found in this date range.</p>
+          </section>
+
+          <section class="panel-card">
+            <h3>Wayback <span class="tag">{{ waybackStatus }}</span></h3>
+            <div v-if="waybackLoading" class="release-skeleton"></div>
+            <div v-else-if="waybackReleases.length" class="release-list">
+              <button
+                v-for="release in waybackReleases"
+                :key="release.layerNumber"
+                type="button"
+                class="release"
+                :class="{ active: release.layerNumber === selectedWayback }"
+                @click="selectedWayback = release.layerNumber"
+              >
+                <span class="mono">{{ release.acquisitionDate ?? release.publishDate }}</span>
+                <small>pub {{ release.publishDate }}</small>
+              </button>
+            </div>
+            <p v-else class="empty">No local Wayback releases found.</p>
+          </section>
+
+          <section class="panel-card">
+            <h3>NDVI time series <span class="tag">S2 L2A</span></h3>
+            <div v-if="ndviError" class="error">{{ ndviError }}</div>
+            <div v-if="ndviLoading && ndviData.length === 0" class="chart-skeleton"></div>
+            <TimeSeriesChart
+              v-else
+              :data="ndviData"
+              :flags="emptyFlags"
+              :flag-labels="emptyFlagLabels"
+              :selected-date="appStore.selectedDate"
+              :y-min="0"
+              :y-max="1"
+              unit="NDVI"
+              class="mini-chart"
+              @point-click="onChartPointClick"
+            />
+          </section>
+
+          <section class="panel-card">
+            <h3>NDMI time series <span class="tag">moisture</span></h3>
+            <div v-if="ndmiError" class="error">{{ ndmiError }}</div>
+            <div v-if="ndmiLoading && ndmiData.length === 0" class="chart-skeleton"></div>
+            <TimeSeriesChart
+              v-else
+              :data="ndmiData"
+              :flags="emptyFlags"
+              :flag-labels="emptyFlagLabels"
+              :selected-date="appStore.selectedDate"
+              :y-min="-1"
+              :y-max="1"
+              unit="NDMI"
+              class="mini-chart"
+              @point-click="onChartPointClick"
+            />
+          </section>
+
+          <button class="expand-btn" @click="$emit('openWorkspace')">Expand to full workspace</button>
+        </div>
+      </aside>
+    </main>
+
+    <footer class="statusbar">
+      <span class="mono strong">{{ statusCoordinate }}</span>
+      <span>|</span>
+      <span>zoom {{ mapZoom }}</span>
+      <span>|</span>
+      <span>Sentinel-2 L2A · Microsoft Planetary Computer</span>
+      <span class="status-right">Imagery (c) Esri</span>
+    </footer>
+
+    <div v-if="toast" class="toast">{{ toast }}</div>
+
+    <div v-if="showSource" class="modal-backdrop" @click.self="showSource = false">
+      <div class="source-modal">
+        <h2>Data Source</h2>
+        <p>TerraPulse uses Microsoft Planetary Computer STAC and TiTiler endpoints for Sentinel-2 L2A discovery, preview imagery, and point-value time series.</p>
+        <button @click="showSource = false">Close</button>
+      </div>
+    </div>
+
+    <div v-if="showHelp" class="modal-backdrop" @click.self="showHelp = false">
+      <div class="source-modal">
+        <h2>Shortcuts</h2>
+        <p><span class="mono">/</span> focuses search. <span class="mono">Esc</span> closes the inspector. Click a chart point to load that scene date.</p>
+        <button @click="showHelp = false">Close</button>
+      </div>
+    </div>
   </div>
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted, onUnmounted, watch } from 'vue'
+import { computed, onMounted, onUnmounted, ref } from 'vue'
 import L from 'leaflet'
 import 'leaflet/dist/leaflet.css'
 import { useAppStore } from '../stores/app'
+import { getDataSource } from '../config/datasources'
+import { useTimeSeries } from '../composables/useTimeSeries'
+import TimeSeriesChart from '../plugins/timeSeries/TimeSeriesChart.vue'
+import { BASEMAPS, getBasemap, type BasemapId } from '../utils/basemap'
 import { serialiseUrl } from '../utils/url'
-import { basemapUrl } from '../utils/basemap'
+import {
+  getPreviewUrl,
+  searchSentinel2Items,
+  stacItemCloudCover,
+  stacItemDate,
+  type PcStacItem,
+} from '../services/planetaryComputerApi'
+import {
+  getAcquisitionDate,
+  getReleasesAtPoint,
+  type WaybackRelease,
+} from '../services/waybackApi'
+import type { Flags, FlagLabels } from '../types/state'
+
+defineEmits<{ openWorkspace: [] }>()
 
 const appStore = useAppStore()
+const mapEl = ref<HTMLDivElement | null>(null)
+const searchInput = ref<HTMLInputElement | null>(null)
+const datePopoverRef = ref<HTMLElement | null>(null)
 
+const basemaps = BASEMAPS
+const activeBasemap = ref<BasemapId>('satellite')
+const initialParams = new URLSearchParams(window.location.search)
+const inspectorOpen = ref(initialParams.has('lon') || initialParams.has('lng'))
+const searchQuery = ref('')
+const placeName = ref(inspectorOpen.value ? 'Selected location' : 'Choose a location')
+const mapZoom = ref(3)
+const statusCoordinate = ref('move over map')
+const toast = ref('')
+const showSource = ref(false)
+const showHelp = ref(false)
+
+const dateOpen = ref(false)
 const startDate = ref(appStore.startDate)
 const endDate = ref(appStore.endDate)
+const pendingStart = ref(startDate.value)
+const pendingEnd = ref(endDate.value)
+const activePreset = ref('5y')
 
-const mapEl = ref<HTMLDivElement | null>(null)
-const picked = ref<[number, number] | null>(null)
+const previewLayer = ref<'TRUE-COLOR' | 'FALSE-COLOR'>('TRUE-COLOR')
+const sceneLoading = ref(false)
+const scenes = ref<PcStacItem[]>([])
+const selectedScene = ref<PcStacItem | null>(null)
+const previewUrl = computed(() => selectedScene.value ? getPreviewUrl(selectedScene.value, previewLayer.value) : '')
+
+const waybackLoading = ref(false)
+const waybackReleases = ref<WaybackRelease[]>([])
+const selectedWayback = ref<number | null>(null)
+
+const emptyFlags: Flags = {}
+const emptyFlagLabels: FlagLabels = {}
+const maskClouds = ref(true)
+const ndviSource = ref(getDataSource('S2_NDVI'))
+const ndmiSource = ref(getDataSource('S2_NDMI'))
+const { data: ndviData, loading: ndviLoading, error: ndviError } = useTimeSeries(ndviSource, maskClouds)
+const { data: ndmiData, loading: ndmiLoading, error: ndmiError } = useTimeSeries(ndmiSource, maskClouds)
 
 let map: L.Map | null = null
-let marker: L.CircleMarker | null = null
+let baseLayer: L.TileLayer | null = null
+let labelLayer: L.TileLayer | null = null
+let marker: L.Marker | null = null
+let sceneRequestId = 0
+let waybackRequestId = 0
+
+const presets = [
+  { id: '1y', label: 'Last 12 months', short: '1y' },
+  { id: '2y', label: 'Last 2 years', short: '2y' },
+  { id: '5y', label: 'Last 5 years', short: '5y' },
+  { id: 'all', label: 'Full archive', short: '2015-' },
+]
+
+const formattedCoordinate = computed(() => {
+  const [lon, lat] = appStore.coordinate
+  const ns = lat >= 0 ? 'N' : 'S'
+  const ew = lon >= 0 ? 'E' : 'W'
+  return `${Math.abs(lat).toFixed(5)} ${ns}, ${Math.abs(lon).toFixed(5)} ${ew}`
+})
+
+const sceneCountLabel = computed(() => {
+  if (!inspectorOpen.value) return 'Click the map to start'
+  if (sceneLoading.value) return 'Searching Sentinel-2 scenes...'
+  return `${scenes.value.length} Sentinel-2 scenes in range`
+})
+
+const selectedSceneDate = computed(() => selectedScene.value ? stacItemDate(selectedScene.value) : '')
+const selectedSceneCloud = computed(() => {
+  if (!selectedScene.value) return '-'
+  const cloud = stacItemCloudCover(selectedScene.value)
+  return Number.isFinite(cloud) ? `${cloud.toFixed(1)}%` : 'unknown'
+})
+
+const waybackStatus = computed(() => {
+  if (waybackLoading.value) return 'loading'
+  return `${waybackReleases.value.length} releases`
+})
+
+function todayIso(): string {
+  return new Date().toISOString().slice(0, 10)
+}
+
+function yearsAgoIso(years: number): string {
+  const d = new Date()
+  d.setUTCFullYear(d.getUTCFullYear() - years)
+  return d.toISOString().slice(0, 10)
+}
+
+function applyPreset(id: string) {
+  activePreset.value = id
+  const end = todayIso()
+  const start = id === 'all' ? '2015-06-23' : yearsAgoIso(id === '1y' ? 1 : id === '2y' ? 2 : 5)
+  pendingStart.value = start
+  pendingEnd.value = end
+  applyCustom()
+}
+
+function resetPending() {
+  pendingStart.value = startDate.value
+  pendingEnd.value = endDate.value
+}
+
+function applyCustom() {
+  if (pendingStart.value >= pendingEnd.value) return
+  startDate.value = pendingStart.value
+  endDate.value = pendingEnd.value
+  appStore.setDateRange(startDate.value, endDate.value)
+  dateOpen.value = false
+  updateUrl()
+  if (inspectorOpen.value) {
+    loadSceneSummary()
+  }
+}
+
+function setBasemap(id: BasemapId) {
+  activeBasemap.value = id
+  const def = getBasemap(id)
+  if (baseLayer) baseLayer.setUrl(def.url)
+  if (labelLayer && map) {
+    map.removeLayer(labelLayer)
+    labelLayer = null
+  }
+  if (def.labelUrl && map) {
+    labelLayer = L.tileLayer(def.labelUrl, { maxZoom: def.options.maxZoom, pane: 'overlayPane' }).addTo(map)
+  }
+}
+
+function markerIcon() {
+  return L.divIcon({
+    className: 'tp-marker',
+    html: '<span></span>',
+    iconSize: [18, 18],
+    iconAnchor: [9, 9],
+  })
+}
+
+function setSelectedPoint(lon: number, lat: number, name = 'Selected location') {
+  appStore.setCoordinate(lon, lat)
+  placeName.value = name
+  inspectorOpen.value = true
+  statusCoordinate.value = `${lat.toFixed(5)}, ${lon.toFixed(5)}`
+  if (map) {
+    if (marker) marker.setLatLng([lat, lon])
+    else marker = L.marker([lat, lon], { icon: markerIcon() }).addTo(map)
+  }
+  updateUrl()
+  loadSceneSummary()
+  loadWayback()
+}
+
+function closeInspector() {
+  inspectorOpen.value = false
+  const url = new URL(window.location.href)
+  url.searchParams.delete('lon')
+  url.searchParams.delete('lat')
+  url.searchParams.delete('selected')
+  history.replaceState(null, '', `${url.pathname}${url.search}${url.hash}`)
+}
+
+function updateUrl() {
+  if (!inspectorOpen.value) return
+  history.replaceState(null, '', serialiseUrl({
+    lon: appStore.coordinate[0],
+    lat: appStore.coordinate[1],
+    start: startDate.value,
+    end: endDate.value,
+    selected: appStore.selectedDate,
+  }))
+}
+
+function chooseScene(items: PcStacItem[]): PcStacItem | null {
+  if (!items.length) return null
+  const selected = appStore.selectedDate
+  const candidates = selected ? items.filter(i => stacItemDate(i) === selected) : items
+  const pool = candidates.length ? candidates : items
+  const clear = pool.filter(i => stacItemCloudCover(i) <= 20)
+  return [...(clear.length ? clear : pool)].sort((a, b) => {
+    const dateCompare = stacItemDate(b).localeCompare(stacItemDate(a))
+    if (dateCompare !== 0) return dateCompare
+    return stacItemCloudCover(a) - stacItemCloudCover(b)
+  })[0] ?? null
+}
+
+async function loadSceneSummary() {
+  if (!inspectorOpen.value) return
+  const requestId = ++sceneRequestId
+  const [lon, lat] = appStore.coordinate
+  sceneLoading.value = true
+  scenes.value = []
+  selectedScene.value = null
+  try {
+    const items = await searchSentinel2Items(lon, lat, startDate.value, endDate.value)
+    if (requestId !== sceneRequestId) return
+    scenes.value = items
+    selectedScene.value = chooseScene(items)
+  } catch (e) {
+    if (requestId !== sceneRequestId) return
+    showToast(e instanceof Error ? e.message : String(e))
+  } finally {
+    if (requestId === sceneRequestId) sceneLoading.value = false
+  }
+}
+
+async function loadWayback() {
+  if (!inspectorOpen.value) return
+  const requestId = ++waybackRequestId
+  const [lon, lat] = appStore.coordinate
+  waybackLoading.value = true
+  waybackReleases.value = []
+  selectedWayback.value = null
+  try {
+    const layers = await getReleasesAtPoint(lat, lon)
+    const enriched = await Promise.all(layers.slice(0, 10).map(async layer => ({
+      ...layer,
+      acquisitionDate: await getAcquisitionDate(lat, lon, layer.identifier),
+    })))
+    if (requestId !== waybackRequestId) return
+    waybackReleases.value = enriched
+    selectedWayback.value = enriched[0]?.layerNumber ?? null
+  } catch {
+    if (requestId === waybackRequestId) waybackReleases.value = []
+  } finally {
+    if (requestId === waybackRequestId) waybackLoading.value = false
+  }
+}
+
+function onChartPointClick(date: string) {
+  appStore.setSelectedDate(date)
+  updateUrl()
+  loadSceneSummary()
+}
+
+async function runSearch() {
+  const q = searchQuery.value.trim()
+  if (!q) return
+  const coordMatch = q.match(/^\s*(-?\d+(?:\.\d+)?)\s*[, ]\s*(-?\d+(?:\.\d+)?)\s*$/)
+  if (coordMatch) {
+    const first = parseFloat(coordMatch[1])
+    const second = parseFloat(coordMatch[2])
+    const lat = Math.abs(first) <= 90 ? first : second
+    const lon = Math.abs(first) <= 90 ? second : first
+    map?.flyTo([lat, lon], map ? Math.max(map.getZoom(), 12) : 12)
+    setSelectedPoint(lon, lat, 'Searched coordinate')
+    return
+  }
+
+  try {
+    const params = new URLSearchParams({ q, format: 'jsonv2', limit: '1' })
+    const response = await fetch(`https://nominatim.openstreetmap.org/search?${params.toString()}`)
+    const results = await response.json() as Array<{ lat: string; lon: string; display_name: string }>
+    const first = results[0]
+    if (!first) {
+      showToast('No place found.')
+      return
+    }
+    const lat = parseFloat(first.lat)
+    const lon = parseFloat(first.lon)
+    map?.flyTo([lat, lon], 12)
+    setSelectedPoint(lon, lat, first.display_name.split(',').slice(0, 2).join(', '))
+  } catch {
+    showToast('Search failed.')
+  }
+}
+
+function focusSearch() {
+  searchInput.value?.focus()
+}
+
+async function copyShareLink() {
+  updateUrl()
+  try {
+    await navigator.clipboard.writeText(window.location.href)
+    showToast('Share link copied.')
+  } catch {
+    showToast('Could not copy link.')
+  }
+}
+
+function showToast(message: string) {
+  toast.value = message
+  window.setTimeout(() => {
+    if (toast.value === message) toast.value = ''
+  }, 2400)
+}
+
+function onDocumentClick(e: MouseEvent) {
+  if (datePopoverRef.value && !datePopoverRef.value.contains(e.target as Node)) {
+    dateOpen.value = false
+  }
+}
+
+function onKeydown(e: KeyboardEvent) {
+  if (e.key === 'Escape') {
+    inspectorOpen.value = false
+    showHelp.value = false
+    showSource.value = false
+  }
+  if (e.key === '/' && document.activeElement !== searchInput.value) {
+    e.preventDefault()
+    focusSearch()
+  }
+}
 
 onMounted(() => {
+  if (appStore.theme !== 'dark') appStore.theme = 'dark'
   if (!mapEl.value) return
-  map = L.map(mapEl.value, { zoomControl: true, attributionControl: false }).setView([20, 0], 2)
-  L.tileLayer(basemapUrl(), { maxZoom: 19 }).addTo(map)
+  const [lon, lat] = appStore.coordinate
+  const def = getBasemap(activeBasemap.value)
+  map = L.map(mapEl.value, {
+    zoomControl: false,
+    attributionControl: true,
+    worldCopyJump: true,
+  }).setView([lat, lon], inspectorOpen.value ? 13 : 3)
+  L.control.zoom({ position: 'topright' }).addTo(map)
+  baseLayer = L.tileLayer(def.url, def.options).addTo(map)
+  if (def.labelUrl) {
+    labelLayer = L.tileLayer(def.labelUrl, { maxZoom: def.options.maxZoom, pane: 'overlayPane' }).addTo(map)
+  }
 
   map.on('click', (e: L.LeafletMouseEvent) => {
-    const { lng: lon, lat } = e.latlng.wrap()
-    picked.value = [lon, lat]
-    if (!map) return
-    if (marker) {
-      marker.setLatLng([lat, lon])
-    } else {
-      marker = L.circleMarker([lat, lon], {
-        radius: 7,
-        color: 'var(--accent)',
-        fillColor: 'var(--accent)',
-        fillOpacity: 0.9,
-        weight: 2,
-      }).addTo(map)
-    }
+    const { lng, lat } = e.latlng.wrap()
+    map?.flyTo([lat, lng], map ? Math.max(map.getZoom(), 12) : 12, { duration: 0.45 })
+    setSelectedPoint(lng, lat)
   })
+  map.on('mousemove', (e: L.LeafletMouseEvent) => {
+    statusCoordinate.value = `${e.latlng.lat.toFixed(5)}, ${e.latlng.lng.toFixed(5)}`
+  })
+  map.on('zoomend', () => { mapZoom.value = map?.getZoom() ?? mapZoom.value })
+  mapZoom.value = map.getZoom()
+
+  if (inspectorOpen.value) {
+    marker = L.marker([lat, lon], { icon: markerIcon() }).addTo(map)
+    loadSceneSummary()
+    loadWayback()
+  }
+
+  document.addEventListener('click', onDocumentClick, true)
+  document.addEventListener('keydown', onKeydown)
 })
 
-watch(() => appStore.effectiveTheme, () => {
-  map?.eachLayer(l => { if (l instanceof L.TileLayer) l.setUrl(basemapUrl()) })
+onUnmounted(() => {
+  document.removeEventListener('click', onDocumentClick, true)
+  document.removeEventListener('keydown', onKeydown)
+  map?.remove()
+  map = null
 })
 
-onUnmounted(() => { map?.remove(); map = null })
-
-function open() {
-  if (!picked.value) return
-  const [lon, lat] = picked.value
-  const qs = serialiseUrl({ lon, lat, start: startDate.value, end: endDate.value, selected: null })
-  window.location.href = qs
-}
 </script>
 
 <style scoped>
-.home {
+.tp-shell {
   display: grid;
-  grid-template-columns: 360px 1fr;
+  grid-template-columns: 52px 1fr;
+  grid-template-rows: 52px 1fr 28px;
+  grid-template-areas:
+    "top top"
+    "rail main"
+    "rail status";
   height: 100vh;
-  background: var(--bg);
-  color: var(--text);
-  font-family: inherit;
+  background: var(--bg-base);
+  color: var(--text-primary);
+  font-family: var(--font-ui);
+  font-size: 13px;
 }
 
-.sidebar {
+.mono { font-family: var(--font-mono); }
+
+.topbar {
+  grid-area: top;
   display: flex;
-  flex-direction: column;
-  gap: 12px;
-  padding: 24px 20px;
+  align-items: center;
+  gap: 16px;
+  padding: 0 16px;
   background: var(--bg-panel);
-  border-right: 1px solid var(--border);
-  overflow-y: auto;
+  border-bottom: 1px solid var(--border);
+  z-index: 1200;
 }
 
 .brand {
   display: flex;
   align-items: center;
-  gap: 14px;
-  margin-bottom: 4px;
-}
-
-.logo {
-  width: 48px;
-  height: 48px;
-  flex-shrink: 0;
-}
-
-.app-title {
-  margin: 0;
-  font-size: 1.15rem;
-  font-weight: 700;
-  color: var(--text);
-}
-
-.app-sub {
-  margin: 2px 0 0;
-  font-size: 0.75rem;
-  color: var(--text-muted);
-}
-
-.card {
-  background: var(--bg);
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  padding: 14px 16px;
-  display: flex;
-  flex-direction: column;
   gap: 10px;
+  min-width: 210px;
 }
 
-.card-header {
+.brand svg {
+  width: 28px;
+  height: 28px;
+}
+
+.brand-name {
+  font-size: 15px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+}
+
+.brand-name span { color: var(--accent); }
+
+.brand-sub {
+  margin-top: 1px;
+  color: var(--text-muted);
+  font-size: 10px;
+  letter-spacing: 0.13em;
+  text-transform: uppercase;
+}
+
+.search {
+  flex: 0 1 340px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 34px;
+  padding: 0 12px;
+  background: var(--bg-panel-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  color: var(--text-secondary);
+}
+
+.search:focus-within {
+  border-color: rgba(54, 226, 164, 0.5);
+  box-shadow: 0 0 0 3px var(--accent-dim);
+}
+
+.search input {
+  flex: 1;
+  min-width: 0;
+  background: none;
+  border: 0;
+  outline: none;
+  color: var(--text-primary);
+  font-family: var(--font-ui);
+  font-size: 12.5px;
+}
+
+.search-icon,
+.pill-icon {
+  color: var(--accent);
+  font-size: 11px;
+  text-transform: uppercase;
+}
+
+.date-range {
+  position: relative;
+  margin-left: auto;
+}
+
+.date-pill {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  height: 34px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--bg-panel-2);
+  color: var(--text-primary);
+  cursor: pointer;
+  padding: 0 14px;
+}
+
+.date-pill:hover {
+  border-color: var(--border-strong);
+}
+
+.date-popover {
+  position: absolute;
+  top: 42px;
+  right: 0;
+  width: 430px;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-pop);
+  padding: 12px;
+  z-index: 1500;
+}
+
+.popover-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+}
+
+.pop-label {
+  margin: 2px 4px 8px;
+  color: var(--text-muted);
+  font-size: 10px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+.preset {
   display: flex;
   align-items: center;
   justify-content: space-between;
-}
-
-.card-title {
-  font-size: 0.82rem;
-  font-weight: 600;
-  color: var(--text-sub);
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
-}
-
-.badge {
-  font-size: 0.72rem;
-  padding: 2px 8px;
-  border-radius: 99px;
-  font-weight: 600;
-}
-
-.badge-ok { background: var(--bg-success); color: var(--green); }
-
-.hint {
-  font-size: 0.82rem;
-  color: var(--text-muted);
-  line-height: 1.55;
-  margin: 0;
-}
-
-.connected-hint { color: var(--text-sub); }
-
-.field {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-}
-
-.field label {
-  font-size: 0.78rem;
-  color: var(--text-sub);
-}
-
-.field input {
-  background: var(--bg-input);
-  border: 1px solid var(--border-mid);
-  border-radius: 4px;
-  color: var(--text);
-  padding: 7px 10px;
-  font-size: 0.88rem;
-  outline: none;
   width: 100%;
-  box-sizing: border-box;
-  color-scheme: dark;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-secondary);
+  cursor: pointer;
+  font-family: var(--font-ui);
+  padding: 8px 10px;
 }
 
-.field input:focus { border-color: var(--accent); }
-
-[data-theme="light"] .field input { color-scheme: light; }
-
-.date-row {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 10px;
+.preset:hover {
+  background: var(--bg-panel-2);
+  color: var(--text-primary);
 }
 
-.coord-card { min-height: 60px; }
-
-.coord-text {
-  margin: 0;
-  font-size: 0.9rem;
-  font-family: monospace;
+.preset.active {
+  background: var(--accent-dim);
   color: var(--accent);
 }
 
-.btn {
-  border: none;
-  border-radius: 6px;
+.custom-dates {
+  display: grid;
+  gap: 10px;
+}
+
+.custom-dates label {
+  display: grid;
+  gap: 5px;
+  color: var(--text-secondary);
+  font-size: 11px;
+}
+
+.custom-dates input {
+  background: var(--bg-panel-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  color: var(--text-primary);
+  color-scheme: dark;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  padding: 8px;
+}
+
+.pop-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.pop-actions button,
+.source-modal button {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--bg-panel-2);
+  color: var(--text-primary);
   cursor: pointer;
-  font-size: 0.88rem;
-  padding: 9px 16px;
-  font-weight: 600;
-  transition: opacity 0.1s;
+  padding: 7px 12px;
 }
 
-.btn:disabled { opacity: 0.4; cursor: not-allowed; }
+.pop-actions .primary,
+.source-modal button {
+  background: var(--accent-dim);
+  border-color: rgba(54, 226, 164, 0.35);
+  color: var(--accent);
+}
 
-.btn-accent {
+.top-actions {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+}
+
+.ready {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  color: var(--text-secondary);
+  font-size: 11px;
+}
+
+.ready span {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
   background: var(--accent);
-  color: var(--bg-panel);
+  box-shadow: 0 0 10px var(--accent);
 }
 
-.btn-accent:not(:disabled):hover { opacity: 0.85; }
+.icon-btn {
+  display: grid;
+  place-items: center;
+  min-width: 34px;
+  height: 34px;
+  border: 1px solid transparent;
+  border-radius: var(--radius-md);
+  background: transparent;
+  color: var(--text-secondary);
+  cursor: pointer;
+  font-family: var(--font-ui);
+  font-size: 12px;
+  padding: 0 8px;
+}
 
-.btn-full { width: 100%; }
+.icon-btn:hover {
+  background: var(--bg-panel-2);
+  border-color: var(--border);
+  color: var(--text-primary);
+}
 
-.btn-open { margin-top: auto; }
+.tool-rail {
+  grid-area: rail;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  padding-top: 12px;
+  background: var(--bg-panel);
+  border-right: 1px solid var(--border);
+  z-index: 1100;
+}
+
+.tool {
+  width: 36px;
+  height: 36px;
+  border: 1px solid transparent;
+  border-radius: var(--radius-md);
+  background: transparent;
+  color: var(--text-secondary);
+  cursor: pointer;
+}
+
+.tool:hover {
+  background: var(--bg-panel-2);
+  color: var(--text-primary);
+}
+
+.tool.active {
+  background: var(--accent-dim);
+  border-color: rgba(54, 226, 164, 0.3);
+  color: var(--accent);
+}
+
+.tool.settings {
+  margin-top: auto;
+  margin-bottom: 12px;
+}
+
+.map-stage {
+  grid-area: main;
+  position: relative;
+  overflow: hidden;
+}
 
 .map {
+  position: absolute;
+  inset: 0;
+}
+
+:deep(.tp-marker span) {
+  display: block;
+  width: 18px;
+  height: 18px;
+  border: 2px solid var(--accent);
+  border-radius: 50%;
+  background: rgba(54, 226, 164, 0.25);
+  box-shadow: 0 0 14px rgba(54, 226, 164, 0.9);
+}
+
+.map-hint {
+  position: absolute;
+  left: 50%;
+  bottom: 24px;
+  z-index: 600;
+  transform: translateX(-50%);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: rgba(18, 24, 38, 0.88);
+  color: var(--text-secondary);
+  padding: 8px 16px;
+  backdrop-filter: blur(8px);
+}
+
+.basemap-switcher {
+  position: absolute;
+  left: 14px;
+  bottom: 34px;
+  z-index: 700;
+  display: flex;
+  gap: 2px;
+  padding: 3px;
+  background: var(--bg-panel);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-2);
+}
+
+.basemap-switcher button {
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-secondary);
+  cursor: pointer;
+  font-size: 11px;
+  padding: 6px 12px;
+}
+
+.basemap-switcher button.active {
+  background: var(--accent-dim);
+  color: var(--accent);
+}
+
+.inspector {
+  position: absolute;
+  top: 0;
+  right: 0;
+  z-index: 900;
+  display: flex;
+  flex-direction: column;
+  width: min(440px, 42vw);
   height: 100%;
-  cursor: crosshair;
+  background: var(--bg-panel);
+  border-left: 1px solid var(--border);
+  box-shadow: var(--shadow-pop);
+  transform: translateX(100%);
+  transition: transform 220ms cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.inspector.open {
+  transform: translateX(0);
+}
+
+.inspector-head {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 14px 16px;
+  border-bottom: 1px solid var(--border);
+}
+
+.place {
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.coord {
+  margin-top: 4px;
+  color: var(--text-secondary);
+  font-size: 11.5px;
+}
+
+.meta {
+  margin-top: 5px;
+  color: var(--text-muted);
+  font-size: 11px;
+}
+
+.head-actions {
+  display: flex;
+  gap: 4px;
+}
+
+.inspector-body {
+  flex: 1;
+  overflow-y: auto;
+  padding: 14px 16px 28px;
+}
+
+.panel-card {
+  margin-bottom: 14px;
+  padding: 12px;
+  background: var(--bg-panel-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+}
+
+.panel-card h3 {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin: 0 0 10px;
+  color: var(--text-secondary);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+.tag {
+  color: var(--text-muted);
+  font-family: var(--font-mono);
+  font-size: 10px;
+  font-weight: 400;
+  letter-spacing: 0;
+  text-transform: none;
+}
+
+.segmented {
+  display: inline-flex;
+  padding: 2px;
+  background: var(--bg-base);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+}
+
+.segmented button {
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--text-secondary);
+  cursor: pointer;
+  font-family: var(--font-ui);
+  font-size: 11px;
+  padding: 4px 9px;
+}
+
+.segmented button.active {
+  background: var(--accent-dim);
+  color: var(--accent);
+}
+
+.preview-tile,
+.image-skeleton {
+  position: relative;
+  width: 100%;
+  aspect-ratio: 1.45;
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--bg-base);
+}
+
+.preview-tile img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.caption {
+  position: absolute;
+  left: 8px;
+  bottom: 8px;
+  padding: 3px 7px;
+  background: rgba(10, 14, 22, 0.76);
+  border-radius: 4px;
+  color: var(--text-primary);
+  font-size: 10px;
+}
+
+.release-list {
+  display: flex;
+  gap: 6px;
+  overflow-x: auto;
+  padding-bottom: 4px;
+}
+
+.release {
+  flex: 0 0 auto;
+  display: grid;
+  gap: 2px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-secondary);
+  cursor: pointer;
+  padding: 6px 8px;
+  text-align: left;
+}
+
+.release.active {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.release small {
+  color: var(--text-muted);
+  font-size: 10px;
+}
+
+.mini-chart {
+  height: 150px;
+}
+
+.chart-skeleton,
+.release-skeleton,
+.image-skeleton {
+  background: linear-gradient(90deg, var(--bg-panel-2) 25%, #202a3a 37%, var(--bg-panel-2) 63%);
+  background-size: 400% 100%;
+  animation: shimmer 1.35s ease infinite;
+  border-radius: var(--radius-sm);
+}
+
+.chart-skeleton {
+  height: 150px;
+}
+
+.release-skeleton {
+  height: 44px;
+}
+
+@keyframes shimmer {
+  0% { background-position: 100% 0; }
+  100% { background-position: -100% 0; }
+}
+
+.empty,
+.error {
+  margin: 0;
+  color: var(--text-muted);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.error {
+  color: var(--error);
+}
+
+.expand-btn {
+  width: 100%;
+  border: 1px solid rgba(54, 226, 164, 0.35);
+  border-radius: var(--radius-md);
+  background: var(--accent-dim);
+  color: var(--accent);
+  cursor: pointer;
+  font-family: var(--font-ui);
+  font-weight: 600;
+  padding: 10px;
+}
+
+.expand-btn:hover {
+  background: rgba(54, 226, 164, 0.2);
+}
+
+.statusbar {
+  grid-area: status;
+  display: flex;
+  align-items: center;
+  gap: 18px;
+  padding: 0 16px;
+  background: var(--bg-panel);
+  border-top: 1px solid var(--border);
+  color: var(--text-muted);
+  font-family: var(--font-mono);
+  font-size: 11px;
+}
+
+.statusbar .strong {
+  color: var(--text-secondary);
+}
+
+.status-right {
+  margin-left: auto;
+}
+
+.toast {
+  position: fixed;
+  right: 18px;
+  bottom: 42px;
+  z-index: 3000;
+  padding: 10px 13px;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-md);
+  color: var(--text-primary);
+  box-shadow: var(--shadow-pop);
+}
+
+.modal-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 2600;
+  display: grid;
+  place-items: center;
+  background: var(--bg-overlay);
+}
+
+.source-modal {
+  width: min(480px, 90vw);
+  padding: 22px;
+  background: var(--bg-panel);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-pop);
+}
+
+.source-modal h2 {
+  margin: 0 0 10px;
+  font-size: 18px;
+}
+
+.source-modal p {
+  margin: 0 0 18px;
+  color: var(--text-secondary);
+  line-height: 1.55;
+}
+
+@media (max-width: 860px) {
+  .tp-shell {
+    grid-template-columns: 44px 1fr;
+  }
+
+  .brand {
+    min-width: auto;
+  }
+
+  .brand-sub,
+  .search {
+    display: none;
+  }
+
+  .date-popover {
+    right: -96px;
+    width: min(430px, calc(100vw - 24px));
+  }
+
+  .inspector {
+    top: auto;
+    bottom: 0;
+    width: 100%;
+    height: min(72vh, 620px);
+    border-top: 1px solid var(--border);
+    border-left: 0;
+    transform: translateY(100%);
+  }
+
+  .inspector.open {
+    transform: translateY(0);
+  }
 }
 </style>

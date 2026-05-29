@@ -1,7 +1,7 @@
 <template>
   <header class="toolbar">
     <img src="/favicon.svg" alt="" class="toolbar-logo" />
-    <span class="toolbar-title">Planetary Computer TS Browser</span>
+    <span class="toolbar-title">TerraPulse Workspace</span>
 
     <!-- Layout preset selector + save/delete -->
     <div class="layout-controls">
