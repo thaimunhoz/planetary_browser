@@ -1,15 +1,15 @@
 <template>
   <div class="tp-shell">
     <header class="topbar">
-      <div class="brand" aria-label="TerraPulse">
+      <div class="brand" aria-label="AgriView">
         <svg viewBox="0 0 32 32" aria-hidden="true">
           <circle cx="16" cy="16" r="6.5" fill="var(--accent)" />
           <ellipse cx="16" cy="16" rx="13.5" ry="6" stroke="var(--accent)" stroke-width="1.6" opacity=".82" transform="rotate(-28 16 16)" />
           <circle cx="27" cy="9.5" r="1.8" fill="var(--accent-2)" />
         </svg>
         <div>
-          <div class="brand-name">Terra<span>Pulse</span></div>
-          <div class="brand-sub">Sentinel-2 time machine</div>
+          <div class="brand-name">Agri<span>View</span></div>
+          <div class="brand-sub">Satellite time series browser</div>
         </div>
       </div>
 
@@ -66,7 +66,6 @@
       </div>
 
       <div class="top-actions">
-        <div class="ready"><span></span>Ready</div>
         <button class="icon-btn" title="Keyboard shortcuts" @click="showHelp = !showHelp">?</button>
         <button class="icon-btn" title="Theme" @click="appStore.toggleTheme()">{{ appStore.theme === 'dark' ? 'D' : 'A' }}</button>
         <button class="icon-btn" title="Share link" @click="copyShareLink">link</button>
@@ -75,11 +74,49 @@
 
     <nav class="tool-rail" aria-label="Map tools">
       <button class="tool active" title="Inspect point">⌖</button>
-      <button class="tool" title="Draw AOI">▱</button>
       <button class="tool" title="Search" @click="focusSearch">⌕</button>
-      <button class="tool" title="Layers">▤</button>
+      <button class="tool" :class="{ active: layersPanelOpen }" title="Layers" @click="layersPanelOpen = !layersPanelOpen">▤</button>
       <button class="tool settings" title="Settings" @click="showSource = true">⚙</button>
     </nav>
+
+    <!-- Layers panel -->
+    <aside v-if="layersPanelOpen" class="layers-panel" aria-label="Layer selector">
+      <div class="layers-head">
+        <span>Layers</span>
+        <button class="icon-btn" @click="layersPanelOpen = false">✕</button>
+      </div>
+
+      <div class="layers-section">
+        <div class="layers-group-label">Sentinel-2 Indices</div>
+        <label class="layer-row layer-row--locked">
+          <span class="layer-check layer-check--on">✓</span>
+          <span class="layer-name">NDVI</span>
+          <span class="layer-src">S2 L2A</span>
+        </label>
+        <label class="layer-row layer-row--locked">
+          <span class="layer-check layer-check--on">✓</span>
+          <span class="layer-name">NDMI</span>
+          <span class="layer-src">S2 L2A</span>
+        </label>
+      </div>
+
+      <div class="layers-section">
+        <div class="layers-group-label">Climate &amp; Weather</div>
+        <label
+          v-for="layer in CLIMATE_LAYERS"
+          :key="layer.id"
+          class="layer-row"
+          @click="toggleClimateLayer(layer.id)"
+        >
+          <span class="layer-check" :class="{ 'layer-check--on': activeClimateIds.has(layer.id) }">
+            {{ activeClimateIds.has(layer.id) ? '✓' : '' }}
+          </span>
+          <span class="layer-dot" :style="{ background: layer.color }"></span>
+          <span class="layer-name">{{ layer.label }}</span>
+          <span class="layer-src">{{ layer.source }}</span>
+        </label>
+      </div>
+    </aside>
 
     <main class="map-stage">
       <div ref="mapEl" class="map"></div>
@@ -127,7 +164,7 @@
           </section>
 
           <section class="panel-card">
-            <h3>Wayback <span class="tag">{{ waybackStatus }}</span></h3>
+            <h3>Time series <span class="tag">{{ waybackStatus }}</span></h3>
             <div v-if="waybackLoading" class="release-skeleton"></div>
             <div v-else-if="waybackReleases.length" class="release-list">
               <button
@@ -181,7 +218,29 @@
             />
           </section>
 
-          <button class="expand-btn" @click="$emit('openWorkspace')">Expand to full workspace</button>
+          <template v-for="layer in activeClimateLayers" :key="layer.id">
+            <section class="panel-card">
+              <h3>
+                {{ layer.label }}
+                <span class="tag">{{ layer.source }}</span>
+              </h3>
+              <div v-if="climateErrors[layer.id]" class="error">{{ climateErrors[layer.id] }}</div>
+              <div v-else-if="climateLoading[layer.id] && !climateData[layer.id]?.length" class="chart-skeleton"></div>
+              <TimeSeriesChart
+                v-else
+                :data="(climateData[layer.id] ?? [])"
+                :flags="emptyFlags"
+                :flag-labels="emptyFlagLabels"
+                :selected-date="appStore.selectedDate"
+                :y-min="layer.yMin"
+                :y-max="layer.yMax"
+                :unit="layer.unit"
+                class="mini-chart"
+                @point-click="onChartPointClick"
+              />
+            </section>
+          </template>
+
         </div>
       </aside>
     </main>
@@ -216,7 +275,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted, ref } from 'vue'
+import { computed, onMounted, onUnmounted, reactive, ref, watch } from 'vue'
 import L from 'leaflet'
 import 'leaflet/dist/leaflet.css'
 import { useAppStore } from '../stores/app'
@@ -237,9 +296,13 @@ import {
   getReleasesAtPoint,
   type WaybackRelease,
 } from '../services/waybackApi'
+import {
+  CLIMATE_LAYERS,
+  fetchClimateTimeSeries,
+  type ClimatePoint,
+} from '../services/climateApi'
 import type { Flags, FlagLabels } from '../types/state'
 
-defineEmits<{ openWorkspace: [] }>()
 
 const appStore = useAppStore()
 const mapEl = ref<HTMLDivElement | null>(null)
@@ -274,6 +337,50 @@ const previewUrl = computed(() => selectedScene.value ? getPreviewUrl(selectedSc
 const waybackLoading = ref(false)
 const waybackReleases = ref<WaybackRelease[]>([])
 const selectedWayback = ref<number | null>(null)
+
+// Layers panel
+const layersPanelOpen = ref(false)
+const activeClimateIds = ref(new Set<string>())
+const activeClimateLayers = computed(() => CLIMATE_LAYERS.filter(l => activeClimateIds.value.has(l.id)))
+
+const climateData = reactive<Record<string, ClimatePoint[]>>({})
+const climateLoading = reactive<Record<string, boolean>>({})
+const climateErrors = reactive<Record<string, string | null>>({})
+
+async function fetchClimate(layerId: string) {
+  const [lon, lat] = appStore.coordinate
+  climateLoading[layerId] = true
+  climateErrors[layerId] = null
+  try {
+    climateData[layerId] = await fetchClimateTimeSeries(lat, lon, appStore.startDate, appStore.endDate, layerId)
+  } catch (e) {
+    climateErrors[layerId] = e instanceof Error ? e.message : String(e)
+    climateData[layerId] = []
+  } finally {
+    climateLoading[layerId] = false
+  }
+}
+
+function toggleClimateLayer(id: string) {
+  const next = new Set(activeClimateIds.value)
+  if (next.has(id)) {
+    next.delete(id)
+  } else {
+    next.add(id)
+    if (inspectorOpen.value) fetchClimate(id)
+  }
+  activeClimateIds.value = next
+}
+
+watch(
+  [() => appStore.coordinate, () => appStore.startDate, () => appStore.endDate],
+  () => {
+    for (const id of activeClimateIds.value) {
+      if (inspectorOpen.value) fetchClimate(id)
+    }
+  },
+  { deep: true },
+)
 
 const emptyFlags: Flags = {}
 const emptyFlagLabels: FlagLabels = {}
@@ -392,6 +499,7 @@ function setSelectedPoint(lon: number, lat: number, name = 'Selected location') 
   updateUrl()
   loadSceneSummary()
   loadWayback()
+  for (const id of activeClimateIds.value) fetchClimate(id)
 }
 
 function closeInspector() {
@@ -812,21 +920,6 @@ onUnmounted(() => {
   gap: 7px;
 }
 
-.ready {
-  display: flex;
-  align-items: center;
-  gap: 7px;
-  color: var(--text-secondary);
-  font-size: 11px;
-}
-
-.ready span {
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
-  background: var(--accent);
-  box-shadow: 0 0 10px var(--accent);
-}
 
 .icon-btn {
   display: grid;
@@ -958,7 +1051,7 @@ onUnmounted(() => {
   z-index: 900;
   display: flex;
   flex-direction: column;
-  width: min(440px, 42vw);
+  width: 50vw;
   height: 100%;
   background: var(--bg-panel);
   border-left: 1px solid var(--border);
@@ -1156,21 +1249,6 @@ onUnmounted(() => {
   color: var(--error);
 }
 
-.expand-btn {
-  width: 100%;
-  border: 1px solid rgba(54, 226, 164, 0.35);
-  border-radius: var(--radius-md);
-  background: var(--accent-dim);
-  color: var(--accent);
-  cursor: pointer;
-  font-family: var(--font-ui);
-  font-weight: 600;
-  padding: 10px;
-}
-
-.expand-btn:hover {
-  background: rgba(54, 226, 164, 0.2);
-}
 
 .statusbar {
   grid-area: status;
@@ -1233,6 +1311,110 @@ onUnmounted(() => {
   margin: 0 0 18px;
   color: var(--text-secondary);
   line-height: 1.55;
+}
+
+/* ---- Layers panel ---- */
+.layers-panel {
+  position: fixed;
+  top: 52px; /* below topbar */
+  left: 52px; /* right of tool-rail */
+  z-index: 1050;
+  width: 260px;
+  background: var(--bg-panel);
+  border-right: 1px solid var(--border);
+  border-bottom: 1px solid var(--border);
+  border-radius: 0 0 var(--radius-md) 0;
+  box-shadow: var(--shadow-pop);
+  overflow-y: auto;
+  max-height: calc(100vh - 80px);
+}
+
+.layers-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--border);
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-secondary);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.layers-section {
+  padding: 10px 0 6px;
+  border-bottom: 1px solid var(--border);
+}
+
+.layers-section:last-child {
+  border-bottom: 0;
+}
+
+.layers-group-label {
+  padding: 2px 12px 8px;
+  color: var(--text-muted);
+  font-size: 10px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+.layer-row {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 7px 12px;
+  cursor: pointer;
+  border-radius: var(--radius-sm);
+  margin: 0 4px;
+  user-select: none;
+}
+
+.layer-row:hover {
+  background: var(--bg-panel-2);
+}
+
+.layer-row--locked {
+  cursor: default;
+  opacity: 0.7;
+}
+
+.layer-check {
+  display: grid;
+  place-items: center;
+  width: 16px;
+  height: 16px;
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  font-size: 10px;
+  color: var(--text-muted);
+  flex-shrink: 0;
+}
+
+.layer-check--on {
+  background: var(--accent-dim);
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.layer-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.layer-name {
+  flex: 1;
+  font-size: 12px;
+  color: var(--text-primary);
+}
+
+.layer-src {
+  font-size: 10px;
+  color: var(--text-muted);
+  font-family: var(--font-mono);
+  white-space: nowrap;
 }
 
 @media (max-width: 860px) {
