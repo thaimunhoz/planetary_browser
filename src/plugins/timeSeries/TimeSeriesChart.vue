@@ -27,6 +27,7 @@ const props = defineProps<{
   yMax: number | null
   unit: string
   color?: string
+  chartType?: 'bars'
 }>()
 
 const emit = defineEmits<{
@@ -99,9 +100,35 @@ function drawAnnotations(u: uPlot) {
   ctx.restore()
 }
 
+function drawBars(u: uPlot) {
+  if (props.chartType !== 'bars') return
+  const ctx = u.ctx
+  const xs = u.data[0]
+  const ys = u.data[1] as (number | null)[]
+  if (!xs.length) return
+
+  const barWidth = Math.max(2, (u.bbox.width / xs.length) * 0.65)
+  const zeroY = u.valToPos(0, 'y', true)
+  const col = seriesColour()
+
+  ctx.save()
+  ctx.fillStyle = col + 'CC'
+
+  for (let i = 0; i < xs.length; i++) {
+    if (ys[i] == null) continue
+    const cx = Math.round(u.valToPos(xs[i], 'x', true))
+    const cy = Math.round(u.valToPos(ys[i]!, 'y', true))
+    const h = zeroY - cy
+    if (Math.abs(h) < 1) continue
+    ctx.fillRect(cx - barWidth / 2, Math.min(cy, zeroY), barWidth, Math.abs(h))
+  }
+  ctx.restore()
+}
+
 function createChart() {
   if (!containerRef.value) return
   const { width, height } = getSize()
+  const isBars = props.chartType === 'bars'
 
   const opts: uPlot.Options = {
     width,
@@ -128,13 +155,13 @@ function createChart() {
       {
         label: props.unit,
         stroke: seriesColour(),
-        width: 0,
+        width: isBars ? 0 : 0,
         paths: () => null,
-        points: { show: true, size: 8, fill: seriesColour() },
+        points: isBars ? { show: false } : { show: true, size: 8, fill: seriesColour() },
       },
     ],
     hooks: {
-      draw: [drawAnnotations],
+      draw: [drawAnnotations, drawBars],
       ready: [
         (u: uPlot) => {
           u.over.addEventListener('click', (e: MouseEvent) => {
@@ -213,9 +240,9 @@ watch(
   { deep: true },
 )
 
-// Recreate chart when y-limits, unit, color, or theme change
+// Recreate chart when y-limits, unit, color, chartType, or theme change
 watch(
-  [() => props.yMin, () => props.yMax, () => props.unit, () => props.color, () => appStore.theme],
+  [() => props.yMin, () => props.yMax, () => props.unit, () => props.color, () => props.chartType, () => appStore.theme],
   () => {
     destroyChart()
     createChart()

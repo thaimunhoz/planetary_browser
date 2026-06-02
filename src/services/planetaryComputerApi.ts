@@ -232,13 +232,13 @@ function applyLayerParams(params: URLSearchParams, layerId: string) {
       params.set('rescale', '-1,1')
       params.set('colormap_name', 'rdylgn')
       break
-    case 'NDMI':
-      params.append('assets', 'B8A')
-      params.append('assets', 'B11')
+    case 'NDWI':
+      params.append('assets', 'B03')
+      params.append('assets', 'B08')
       params.set('asset_as_band', 'true')
-      params.set('expression', '(B8A_b1-B11_b1)/(B8A_b1+B11_b1)')
+      params.set('expression', '(B03_b1-B08_b1)/(B03_b1+B08_b1)')
       params.set('rescale', '-1,1')
-      params.set('colormap_name', 'rdbu')
+      params.set('colormap_name', 'rdbu_r')
       break
     case 'TRUE-COLOR':
     default:

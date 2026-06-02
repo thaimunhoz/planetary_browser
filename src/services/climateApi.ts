@@ -13,6 +13,9 @@ export interface ClimateLayer {
   yMax: number
   openMeteoVar: string
   color: string
+  chartType?: 'bars'
+  /** S2 imagery mode to activate when user picks this layer's imagery button */
+  imageryMode: string
   palettes: ClimatePalette[]
 }
 
@@ -26,6 +29,7 @@ export const CLIMATE_LAYERS: ClimateLayer[] = [
     yMax: 50,
     openMeteoVar: 'temperature_2m_mean',
     color: '#E05252',
+    imageryMode: 'climate:temperature',
     palettes: [
       { id: 'thermal',  label: 'Thermal',  color: '#E05252' },
       { id: 'coolwarm', label: 'Coolwarm', color: '#9C59D1' },
@@ -41,6 +45,8 @@ export const CLIMATE_LAYERS: ClimateLayer[] = [
     yMax: 100,
     openMeteoVar: 'precipitation_sum',
     color: '#4DA6FF',
+    chartType: 'bars',
+    imageryMode: 'climate:precipitation',
     palettes: [
       { id: 'blues',   label: 'Blues',   color: '#4DA6FF' },
       { id: 'ylgnbu',  label: 'YlGnBu',  color: '#26A69A' },
@@ -56,40 +62,11 @@ export const CLIMATE_LAYERS: ClimateLayer[] = [
     yMax: 20,
     openMeteoVar: 'et0_fao_evapotranspiration',
     color: '#3BAE70',
+    imageryMode: 'climate:et0',
     palettes: [
       { id: 'greens', label: 'Greens', color: '#3BAE70' },
       { id: 'ylgn',   label: 'YlGn',   color: '#8BC34A' },
       { id: 'teal',   label: 'Teal',   color: '#26A69A' },
-    ],
-  },
-  {
-    id: 'wind',
-    label: 'Wind Speed (10 m)',
-    source: 'ERA5 / Open-Meteo',
-    unit: 'm/s',
-    yMin: 0,
-    yMax: 30,
-    openMeteoVar: 'wind_speed_10m_max',
-    color: '#8A9BB0',
-    palettes: [
-      { id: 'greys',   label: 'Greys',   color: '#8A9BB0' },
-      { id: 'steel',   label: 'Steel',   color: '#607D8B' },
-      { id: 'breeze',  label: 'Breeze',  color: '#B0BEC5' },
-    ],
-  },
-  {
-    id: 'solar',
-    label: 'Solar Radiation',
-    source: 'ERA5 / Open-Meteo',
-    unit: 'MJ/m²',
-    yMin: 0,
-    yMax: 40,
-    openMeteoVar: 'shortwave_radiation_sum',
-    color: '#FF4757',
-    palettes: [
-      { id: 'fire',    label: 'Fire',    color: '#FF4757' },
-      { id: 'oranges', label: 'Oranges', color: '#FF8C00' },
-      { id: 'ylord',   label: 'YlOrRd', color: '#FF6B35' },
     ],
   },
 ]

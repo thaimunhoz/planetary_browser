@@ -148,32 +148,83 @@
               <span class="segmented">
                 <button :class="{ active: previewLayer === 'TRUE-COLOR' }" @click="previewLayer = 'TRUE-COLOR'">True</button>
                 <button :class="{ active: previewLayer === 'FALSE-COLOR' }" @click="previewLayer = 'FALSE-COLOR'">False</button>
+                <template v-for="layer in activeClimateLayers" :key="layer.id">
+                  <button
+                    :class="{ active: previewLayer === layer.imageryMode }"
+                    :style="previewLayer === layer.imageryMode ? { background: currentPaletteColor(layer) + '28', color: currentPaletteColor(layer), borderColor: currentPaletteColor(layer) + '66' } : {}"
+                    @click="previewLayer = layer.imageryMode"
+                  >{{ climateImageryLabel(layer.id) }}</button>
+                </template>
               </span>
             </h3>
-            <div v-if="sceneLoading" class="image-skeleton"></div>
-            <div
-              v-else-if="previewUrl"
-              class="preview-tile"
-              @wheel.prevent="onImageWheel"
-              @mousedown="onImageMouseDown"
-            >
-              <img
-                :src="previewUrl"
-                alt="Sentinel-2 preview for the selected location"
-                :style="{
-                  transform: `scale(${imgZoom}) translate(${imgPanX}px, ${imgPanY}px)`,
-                  cursor: imgZoom > 1 ? 'grab' : 'zoom-in',
-                }"
-                @dragstart.prevent
-              />
-              <div class="img-zoom-controls">
-                <button @click.stop="imgZoom = Math.min(imgZoom * 1.4, 8)" title="Zoom in">＋</button>
-                <button @click.stop="imgZoom = 1; imgPanX = 0; imgPanY = 0" title="Reset">⊡</button>
-                <button @click.stop="imgZoom = Math.max(imgZoom / 1.4, 1); if (imgZoom === 1) { imgPanX = 0; imgPanY = 0 }" title="Zoom out">－</button>
+            <!-- Climate data card -->
+            <template v-if="activeClimateImageryLayer">
+              <div class="climate-preview">
+                <div class="climate-preview-value">
+                  <span class="climate-num" :style="{ color: currentPaletteColor(activeClimateImageryLayer) }">
+                    {{ climateValueAtDate(activeClimateImageryLayer.id) != null
+                        ? Number(climateValueAtDate(activeClimateImageryLayer.id)).toFixed(1)
+                        : '—' }}
+                  </span>
+                  <span class="climate-unit">{{ activeClimateImageryLayer.unit }}</span>
+                  <span class="climate-date-label mono">{{ appStore.selectedDate ?? 'select a date' }}</span>
+                </div>
+                <div class="climate-gradient-wrap">
+                  <div
+                    class="climate-gradient-track"
+                    :style="{ background: climateGradient(activeClimateImageryLayer.id) }"
+                  >
+                    <div
+                      v-if="climateValueAtDate(activeClimateImageryLayer.id) != null"
+                      class="climate-needle"
+                      :style="{
+                        left: climateNeedlePos(activeClimateImageryLayer) + '%',
+                        background: currentPaletteColor(activeClimateImageryLayer),
+                      }"
+                    ></div>
+                  </div>
+                  <div class="climate-range-labels">
+                    <span>{{ activeClimateImageryLayer.yMin }} {{ activeClimateImageryLayer.unit }}</span>
+                    <span>{{ activeClimateImageryLayer.yMax }} {{ activeClimateImageryLayer.unit }}</span>
+                  </div>
+                </div>
+                <div v-if="climateStats(activeClimateImageryLayer.id)" class="climate-stats">
+                  <span>Min <b>{{ climateStats(activeClimateImageryLayer.id)!.min }}</b></span>
+                  <span>Avg <b>{{ climateStats(activeClimateImageryLayer.id)!.avg }}</b></span>
+                  <span>Max <b>{{ climateStats(activeClimateImageryLayer.id)!.max }}</b></span>
+                  <span class="climate-src">{{ activeClimateImageryLayer.source }}</span>
+                </div>
+                <p v-else class="empty">Enable the layer and click the map to load data.</p>
               </div>
-              <span class="caption mono">{{ selectedSceneDate }} · cloud {{ selectedSceneCloud }}</span>
-            </div>
-            <p v-else class="empty">No Sentinel-2 scenes found in this date range.</p>
+            </template>
+
+            <!-- Satellite imagery -->
+            <template v-else>
+              <div v-if="sceneLoading" class="image-skeleton"></div>
+              <div
+                v-else-if="previewUrl"
+                class="preview-tile"
+                @wheel.prevent="onImageWheel"
+                @mousedown="onImageMouseDown"
+              >
+                <img
+                  :src="previewUrl"
+                  alt="Sentinel-2 preview for the selected location"
+                  :style="{
+                    transform: `scale(${imgZoom}) translate(${imgPanX}px, ${imgPanY}px)`,
+                    cursor: imgZoom > 1 ? 'grab' : 'zoom-in',
+                  }"
+                  @dragstart.prevent
+                />
+                <div class="img-zoom-controls">
+                  <button @click.stop="imgZoom = Math.min(imgZoom * 1.4, 8)" title="Zoom in">＋</button>
+                  <button @click.stop="imgZoom = 1; imgPanX = 0; imgPanY = 0" title="Reset">⊡</button>
+                  <button @click.stop="imgZoom = Math.max(imgZoom / 1.4, 1); if (imgZoom === 1) { imgPanX = 0; imgPanY = 0 }" title="Zoom out">－</button>
+                </div>
+                <span class="caption mono">{{ selectedSceneDate }} · cloud {{ selectedSceneCloud }}</span>
+              </div>
+              <p v-else class="empty">No Sentinel-2 scenes found in this date range.</p>
+            </template>
           </section>
 
           <section class="panel-card">
@@ -186,7 +237,7 @@
                 type="button"
                 class="release"
                 :class="{ active: release.layerNumber === selectedWayback }"
-                @click="selectedWayback = release.layerNumber"
+                @click="onWaybackClick(release)"
               >
                 <span class="mono">{{ release.acquisitionDate ?? release.publishDate }}</span>
                 <small>pub {{ release.publishDate }}</small>
@@ -240,6 +291,7 @@
                 :y-max="layer.yMax"
                 :unit="layer.unit"
                 :color="currentPaletteColor(layer)"
+                :chart-type="layer.chartType"
                 class="mini-chart"
                 @point-click="onChartPointClick"
               />
@@ -334,7 +386,7 @@ const pendingStart = ref(startDate.value)
 const pendingEnd = ref(endDate.value)
 const activePreset = ref('5y')
 
-const previewLayer = ref<'TRUE-COLOR' | 'FALSE-COLOR'>('TRUE-COLOR')
+const previewLayer = ref<string>('TRUE-COLOR')
 const sceneLoading = ref(false)
 const scenes = ref<PcStacItem[]>([])
 const selectedScene = ref<PcStacItem | null>(null)
@@ -367,10 +419,25 @@ async function fetchClimate(layerId: string) {
   }
 }
 
+const CLIMATE_IMAGERY_LABELS: Record<string, string> = {
+  temperature: 'Temp',
+  precipitation: 'Precip',
+  et0: 'ET₀',
+}
+
+function climateImageryLabel(id: string): string {
+  return CLIMATE_IMAGERY_LABELS[id] ?? id
+}
+
 function toggleClimateLayer(id: string) {
   const next = new Set(activeClimateIds.value)
   if (next.has(id)) {
     next.delete(id)
+    // Reset imagery if this layer's mode was active
+    const removed = CLIMATE_LAYERS.find(l => l.id === id)
+    if (removed && previewLayer.value === removed.imageryMode) {
+      previewLayer.value = 'TRUE-COLOR'
+    }
   } else {
     next.add(id)
     if (inspectorOpen.value) fetchClimate(id)
@@ -440,6 +507,55 @@ function setLayerPalette(layerId: string, paletteId: string) {
 function currentPaletteColor(layer: ClimateLayer): string {
   const id = activePaletteId(layer.id)
   return layer.palettes.find(p => p.id === id)?.color ?? layer.color
+}
+
+// Which climate layer's imagery card is currently active (if any)
+const activeClimateImageryLayer = computed(() =>
+  previewLayer.value.startsWith('climate:')
+    ? CLIMATE_LAYERS.find(l => l.imageryMode === previewLayer.value) ?? null
+    : null,
+)
+
+// Value for the selected date from fetched climate data
+function climateValueAtDate(layerId: string): number | null {
+  const date = appStore.selectedDate
+  if (!date) return null
+  return climateData[layerId]?.find(p => p.date === date)?.value ?? null
+}
+
+// Stats over the whole fetched series
+function climateStats(layerId: string): { min: string; avg: string; max: string } | null {
+  const values = climateData[layerId]?.map(p => p.value).filter((v): v is number => v !== null)
+  if (!values?.length) return null
+  const min = Math.min(...values)
+  const max = Math.max(...values)
+  const avg = values.reduce((a, b) => a + b, 0) / values.length
+  return { min: min.toFixed(1), avg: avg.toFixed(1), max: max.toFixed(1) }
+}
+
+// Needle position (0–100%) on the gradient bar
+function climateNeedlePos(layer: ClimateLayer): number {
+  const v = climateValueAtDate(layer.id)
+  if (v == null) return 0
+  const pct = (v - layer.yMin) / (layer.yMax - layer.yMin)
+  return Math.max(0, Math.min(100, pct * 100))
+}
+
+// CSS gradient string appropriate to each variable
+const CLIMATE_GRADIENTS: Record<string, string> = {
+  temperature:   'linear-gradient(to right, #4DA6FF, #FFFFFF 50%, #E05252)',
+  precipitation: 'linear-gradient(to right, #F5F5DC, #4DA6FF)',
+  et0:           'linear-gradient(to right, #FFEB3B, #3BAE70)',
+}
+function climateGradient(layerId: string): string {
+  return CLIMATE_GRADIENTS[layerId] ?? 'linear-gradient(to right, var(--bg-panel-2), var(--accent))'
+}
+
+// Fix: clicking a time-series release now also updates the S2 preview
+function onWaybackClick(release: WaybackRelease) {
+  selectedWayback.value = release.layerNumber
+  const date = release.acquisitionDate ?? release.publishDate
+  if (date) onChartPointClick(date)
 }
 
 let map: L.Map | null = null
@@ -1183,6 +1299,8 @@ onUnmounted(() => {
 
 .segmented {
   display: inline-flex;
+  flex-wrap: wrap;
+  gap: 2px;
   padding: 2px;
   background: var(--bg-base);
   border: 1px solid var(--border);
@@ -1398,6 +1516,90 @@ onUnmounted(() => {
   margin: 0 0 18px;
   color: var(--text-secondary);
   line-height: 1.55;
+}
+
+/* ---- Climate data card (imagery section) ---- */
+.climate-preview {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  padding: 4px 0;
+}
+
+.climate-preview-value {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+}
+
+.climate-num {
+  font-size: 42px;
+  font-weight: 700;
+  font-family: var(--font-mono);
+  line-height: 1;
+}
+
+.climate-unit {
+  font-size: 16px;
+  color: var(--text-secondary);
+  font-family: var(--font-mono);
+}
+
+.climate-date-label {
+  margin-left: auto;
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+.climate-gradient-wrap {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.climate-gradient-track {
+  position: relative;
+  height: 18px;
+  border-radius: var(--radius-sm);
+  overflow: visible;
+}
+
+.climate-needle {
+  position: absolute;
+  top: -4px;
+  width: 3px;
+  height: 26px;
+  border-radius: 2px;
+  transform: translateX(-50%);
+  box-shadow: 0 0 6px rgba(0,0,0,0.5);
+}
+
+.climate-range-labels {
+  display: flex;
+  justify-content: space-between;
+  font-size: 10px;
+  color: var(--text-muted);
+  font-family: var(--font-mono);
+}
+
+.climate-stats {
+  display: flex;
+  gap: 12px;
+  flex-wrap: wrap;
+  font-size: 11px;
+  color: var(--text-secondary);
+}
+
+.climate-stats b {
+  color: var(--text-primary);
+  font-family: var(--font-mono);
+}
+
+.climate-src {
+  margin-left: auto;
+  color: var(--text-muted);
+  font-family: var(--font-mono);
+  font-size: 10px;
 }
 
 /* ---- Layers panel ---- */
