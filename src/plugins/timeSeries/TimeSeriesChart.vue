@@ -26,6 +26,7 @@ const props = defineProps<{
   yMin: number | null
   yMax: number | null
   unit: string
+  color?: string
 }>()
 
 const emit = defineEmits<{
@@ -41,7 +42,7 @@ function flagColour(value: string): string {
 }
 
 function seriesColour(): string {
-  return props.unit === 'NDMI' ? cssVar('--accent-2') : cssVar('--accent')
+  return props.color ?? cssVar('--accent')
 }
 
 function getSize(): { width: number; height: number } {
@@ -212,9 +213,9 @@ watch(
   { deep: true },
 )
 
-// Recreate chart when y-limits, unit, or theme change
+// Recreate chart when y-limits, unit, color, or theme change
 watch(
-  [() => props.yMin, () => props.yMax, () => props.unit, () => appStore.theme],
+  [() => props.yMin, () => props.yMax, () => props.unit, () => props.color, () => appStore.theme],
   () => {
     destroyChart()
     createChart()

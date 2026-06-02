@@ -1,3 +1,9 @@
+export interface ClimatePalette {
+  id: string
+  label: string
+  color: string
+}
+
 export interface ClimateLayer {
   id: string
   label: string
@@ -7,6 +13,7 @@ export interface ClimateLayer {
   yMax: number
   openMeteoVar: string
   color: string
+  palettes: ClimatePalette[]
 }
 
 export const CLIMATE_LAYERS: ClimateLayer[] = [
@@ -18,7 +25,12 @@ export const CLIMATE_LAYERS: ClimateLayer[] = [
     yMin: -40,
     yMax: 50,
     openMeteoVar: 'temperature_2m_mean',
-    color: '#FF8C42',
+    color: '#E05252',
+    palettes: [
+      { id: 'thermal',  label: 'Thermal',  color: '#E05252' },
+      { id: 'coolwarm', label: 'Coolwarm', color: '#9C59D1' },
+      { id: 'reds',     label: 'Reds',     color: '#FF8080' },
+    ],
   },
   {
     id: 'precipitation',
@@ -29,6 +41,11 @@ export const CLIMATE_LAYERS: ClimateLayer[] = [
     yMax: 100,
     openMeteoVar: 'precipitation_sum',
     color: '#4DA6FF',
+    palettes: [
+      { id: 'blues',   label: 'Blues',   color: '#4DA6FF' },
+      { id: 'ylgnbu',  label: 'YlGnBu',  color: '#26A69A' },
+      { id: 'wetdry',  label: 'Wet/Dry', color: '#0077CC' },
+    ],
   },
   {
     id: 'et0',
@@ -38,7 +55,12 @@ export const CLIMATE_LAYERS: ClimateLayer[] = [
     yMin: 0,
     yMax: 20,
     openMeteoVar: 'et0_fao_evapotranspiration',
-    color: '#36E2A4',
+    color: '#3BAE70',
+    palettes: [
+      { id: 'greens', label: 'Greens', color: '#3BAE70' },
+      { id: 'ylgn',   label: 'YlGn',   color: '#8BC34A' },
+      { id: 'teal',   label: 'Teal',   color: '#26A69A' },
+    ],
   },
   {
     id: 'wind',
@@ -48,7 +70,12 @@ export const CLIMATE_LAYERS: ClimateLayer[] = [
     yMin: 0,
     yMax: 30,
     openMeteoVar: 'wind_speed_10m_max',
-    color: '#C084FC',
+    color: '#8A9BB0',
+    palettes: [
+      { id: 'greys',   label: 'Greys',   color: '#8A9BB0' },
+      { id: 'steel',   label: 'Steel',   color: '#607D8B' },
+      { id: 'breeze',  label: 'Breeze',  color: '#B0BEC5' },
+    ],
   },
   {
     id: 'solar',
@@ -58,7 +85,12 @@ export const CLIMATE_LAYERS: ClimateLayer[] = [
     yMin: 0,
     yMax: 40,
     openMeteoVar: 'shortwave_radiation_sum',
-    color: '#FACC15',
+    color: '#FF4757',
+    palettes: [
+      { id: 'fire',    label: 'Fire',    color: '#FF4757' },
+      { id: 'oranges', label: 'Oranges', color: '#FF8C00' },
+      { id: 'ylord',   label: 'YlOrRd', color: '#FF6B35' },
+    ],
   },
 ]
 

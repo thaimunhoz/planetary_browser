@@ -93,11 +93,6 @@
           <span class="layer-name">NDVI</span>
           <span class="layer-src">S2 L2A</span>
         </label>
-        <label class="layer-row layer-row--locked">
-          <span class="layer-check layer-check--on">✓</span>
-          <span class="layer-name">NDMI</span>
-          <span class="layer-src">S2 L2A</span>
-        </label>
       </div>
 
       <div class="layers-section">
@@ -156,8 +151,26 @@
               </span>
             </h3>
             <div v-if="sceneLoading" class="image-skeleton"></div>
-            <div v-else-if="previewUrl" class="preview-tile">
-              <img :src="previewUrl" alt="Sentinel-2 preview for the selected location" />
+            <div
+              v-else-if="previewUrl"
+              class="preview-tile"
+              @wheel.prevent="onImageWheel"
+              @mousedown="onImageMouseDown"
+            >
+              <img
+                :src="previewUrl"
+                alt="Sentinel-2 preview for the selected location"
+                :style="{
+                  transform: `scale(${imgZoom}) translate(${imgPanX}px, ${imgPanY}px)`,
+                  cursor: imgZoom > 1 ? 'grab' : 'zoom-in',
+                }"
+                @dragstart.prevent
+              />
+              <div class="img-zoom-controls">
+                <button @click.stop="imgZoom = Math.min(imgZoom * 1.4, 8)" title="Zoom in">＋</button>
+                <button @click.stop="imgZoom = 1; imgPanX = 0; imgPanY = 0" title="Reset">⊡</button>
+                <button @click.stop="imgZoom = Math.max(imgZoom / 1.4, 1); if (imgZoom === 1) { imgPanX = 0; imgPanY = 0 }" title="Zoom out">－</button>
+              </div>
               <span class="caption mono">{{ selectedSceneDate }} · cloud {{ selectedSceneCloud }}</span>
             </div>
             <p v-else class="empty">No Sentinel-2 scenes found in this date range.</p>
@@ -200,29 +213,20 @@
             />
           </section>
 
-          <section class="panel-card">
-            <h3>NDMI time series <span class="tag">moisture</span></h3>
-            <div v-if="ndmiError" class="error">{{ ndmiError }}</div>
-            <div v-if="ndmiLoading && ndmiData.length === 0" class="chart-skeleton"></div>
-            <TimeSeriesChart
-              v-else
-              :data="ndmiData"
-              :flags="emptyFlags"
-              :flag-labels="emptyFlagLabels"
-              :selected-date="appStore.selectedDate"
-              :y-min="-1"
-              :y-max="1"
-              unit="NDMI"
-              class="mini-chart"
-              @point-click="onChartPointClick"
-            />
-          </section>
 
           <template v-for="layer in activeClimateLayers" :key="layer.id">
             <section class="panel-card">
               <h3>
                 {{ layer.label }}
-                <span class="tag">{{ layer.source }}</span>
+                <span class="segmented">
+                  <button
+                    v-for="palette in layer.palettes"
+                    :key="palette.id"
+                    :class="{ active: activePaletteId(layer.id) === palette.id }"
+                    :style="activePaletteId(layer.id) === palette.id ? { background: palette.color + '28', color: palette.color, borderColor: palette.color + '66' } : {}"
+                    @click="setLayerPalette(layer.id, palette.id)"
+                  >{{ palette.label }}</button>
+                </span>
               </h3>
               <div v-if="climateErrors[layer.id]" class="error">{{ climateErrors[layer.id] }}</div>
               <div v-else-if="climateLoading[layer.id] && !climateData[layer.id]?.length" class="chart-skeleton"></div>
@@ -235,6 +239,7 @@
                 :y-min="layer.yMin"
                 :y-max="layer.yMax"
                 :unit="layer.unit"
+                :color="currentPaletteColor(layer)"
                 class="mini-chart"
                 @point-click="onChartPointClick"
               />
@@ -299,6 +304,7 @@ import {
 import {
   CLIMATE_LAYERS,
   fetchClimateTimeSeries,
+  type ClimateLayer,
   type ClimatePoint,
 } from '../services/climateApi'
 import type { Flags, FlagLabels } from '../types/state'
@@ -386,9 +392,55 @@ const emptyFlags: Flags = {}
 const emptyFlagLabels: FlagLabels = {}
 const maskClouds = ref(true)
 const ndviSource = ref(getDataSource('S2_NDVI'))
-const ndmiSource = ref(getDataSource('S2_NDMI'))
 const { data: ndviData, loading: ndviLoading, error: ndviError } = useTimeSeries(ndviSource, maskClouds)
-const { data: ndmiData, loading: ndmiLoading, error: ndmiError } = useTimeSeries(ndmiSource, maskClouds)
+
+// Image zoom / pan
+const imgZoom = ref(1)
+const imgPanX = ref(0)
+const imgPanY = ref(0)
+
+watch(previewUrl, () => {
+  imgZoom.value = 1
+  imgPanX.value = 0
+  imgPanY.value = 0
+})
+
+function onImageWheel(e: WheelEvent) {
+  imgZoom.value = Math.max(1, Math.min(8, imgZoom.value * (e.deltaY < 0 ? 1.15 : 1 / 1.15)))
+}
+
+function onImageMouseDown(e: MouseEvent) {
+  const startX = e.clientX
+  const startY = e.clientY
+  const startPanX = imgPanX.value
+  const startPanY = imgPanY.value
+  const onMove = (ev: MouseEvent) => {
+    imgPanX.value = startPanX + (ev.clientX - startX) / imgZoom.value
+    imgPanY.value = startPanY + (ev.clientY - startY) / imgZoom.value
+  }
+  const onUp = () => {
+    window.removeEventListener('mousemove', onMove)
+    window.removeEventListener('mouseup', onUp)
+  }
+  window.addEventListener('mousemove', onMove)
+  window.addEventListener('mouseup', onUp)
+}
+
+// Climate palette selection (per layer id → palette id)
+const activePalettes = reactive<Record<string, string>>({})
+
+function activePaletteId(layerId: string): string {
+  return activePalettes[layerId] ?? CLIMATE_LAYERS.find(l => l.id === layerId)?.palettes[0]?.id ?? ''
+}
+
+function setLayerPalette(layerId: string, paletteId: string) {
+  activePalettes[layerId] = paletteId
+}
+
+function currentPaletteColor(layer: ClimateLayer): string {
+  const id = activePaletteId(layer.id)
+  return layer.palettes.find(p => p.id === id)?.color ?? layer.color
+}
 
 let map: L.Map | null = null
 let baseLayer: L.TileLayer | null = null
@@ -1168,6 +1220,41 @@ onUnmounted(() => {
   width: 100%;
   height: 100%;
   object-fit: cover;
+  transform-origin: center;
+  transition: transform 60ms linear;
+  user-select: none;
+}
+
+.img-zoom-controls {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  z-index: 10;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.img-zoom-controls button {
+  display: grid;
+  place-items: center;
+  width: 26px;
+  height: 26px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: rgba(10, 14, 22, 0.82);
+  color: var(--text-primary);
+  cursor: pointer;
+  font-size: 14px;
+  line-height: 1;
+  padding: 0;
+  backdrop-filter: blur(4px);
+}
+
+.img-zoom-controls button:hover {
+  background: rgba(54, 226, 164, 0.18);
+  border-color: var(--accent);
+  color: var(--accent);
 }
 
 .caption {
