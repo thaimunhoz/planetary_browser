@@ -233,6 +233,7 @@ function createChart() {
         },
       ],
     },
+    legend: { show: false },
     cursor: { show: true, x: true, y: false, drag: { x: false, y: false } },
     select: { show: false, left: 0, top: 0, width: 0, height: 0 },
   }
