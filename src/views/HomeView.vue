@@ -66,8 +66,6 @@
       </div>
 
       <div class="top-actions">
-        <button class="icon-btn" title="Keyboard shortcuts" @click="showHelp = !showHelp">?</button>
-        <button class="icon-btn" title="Theme" @click="appStore.toggleTheme()">{{ appStore.theme === 'dark' ? 'D' : 'A' }}</button>
         <button class="icon-btn" title="Share link" @click="copyShareLink">link</button>
       </div>
     </header>
@@ -76,7 +74,6 @@
       <button class="tool active" title="Inspect point">⌖</button>
       <button class="tool" title="Search" @click="focusSearch">⌕</button>
       <button class="tool" :class="{ active: layersPanelOpen }" title="Layers" @click="layersPanelOpen = !layersPanelOpen">▤</button>
-      <button class="tool settings" title="Settings" @click="showSource = true">⚙</button>
     </nav>
 
     <!-- Layers panel -->
@@ -228,26 +225,31 @@
           </section>
 
           <section class="panel-card">
-            <h3>Time series <span class="tag">{{ waybackStatus }}</span></h3>
-            <div v-if="waybackLoading" class="release-skeleton"></div>
-            <div v-else-if="waybackReleases.length" class="release-list">
+            <h3>Available scenes <span class="tag">{{ sceneDates.length }} cloud-filtered</span></h3>
+            <div v-if="ndviLoading && sceneDates.length === 0" class="release-skeleton"></div>
+            <div v-else-if="sceneDates.length" class="release-list">
               <button
-                v-for="release in waybackReleases"
-                :key="release.layerNumber"
+                v-for="date in sceneDates"
+                :key="date"
                 type="button"
                 class="release"
-                :class="{ active: release.layerNumber === selectedWayback }"
-                @click="onWaybackClick(release)"
+                :class="{ active: date === appStore.selectedDate }"
+                @click="onChartPointClick(date)"
               >
-                <span class="mono">{{ release.acquisitionDate ?? release.publishDate }}</span>
-                <small>pub {{ release.publishDate }}</small>
+                <span class="mono">{{ date }}</span>
               </button>
             </div>
-            <p v-else class="empty">No local Wayback releases found.</p>
+            <p v-else class="empty">No cloud-free scenes found in this date range.</p>
           </section>
 
           <section class="panel-card">
-            <h3>NDVI time series <span class="tag">S2 L2A</span></h3>
+            <h3>
+              NDVI time series
+              <span class="tag-row">
+                <span class="tag">S2 L2A</span>
+                <span class="cloud-tag" title="Pixels with SCL classes 3, 7–11 (cloud, shadow, snow) are excluded">☁ cloud masked</span>
+              </span>
+            </h3>
             <div v-if="ndviError" class="error">{{ ndviError }}</div>
             <div v-if="ndviLoading && ndviData.length === 0" class="chart-skeleton"></div>
             <TimeSeriesChart
@@ -313,21 +315,6 @@
 
     <div v-if="toast" class="toast">{{ toast }}</div>
 
-    <div v-if="showSource" class="modal-backdrop" @click.self="showSource = false">
-      <div class="source-modal">
-        <h2>Data Source</h2>
-        <p>TerraPulse uses Microsoft Planetary Computer STAC and TiTiler endpoints for Sentinel-2 L2A discovery, preview imagery, and point-value time series.</p>
-        <button @click="showSource = false">Close</button>
-      </div>
-    </div>
-
-    <div v-if="showHelp" class="modal-backdrop" @click.self="showHelp = false">
-      <div class="source-modal">
-        <h2>Shortcuts</h2>
-        <p><span class="mono">/</span> focuses search. <span class="mono">Esc</span> closes the inspector. Click a chart point to load that scene date.</p>
-        <button @click="showHelp = false">Close</button>
-      </div>
-    </div>
   </div>
 </template>
 
@@ -348,11 +335,6 @@ import {
   stacItemDate,
   type PcStacItem,
 } from '../services/planetaryComputerApi'
-import {
-  getAcquisitionDate,
-  getReleasesAtPoint,
-  type WaybackRelease,
-} from '../services/waybackApi'
 import {
   CLIMATE_LAYERS,
   fetchClimateTimeSeries,
@@ -376,8 +358,6 @@ const placeName = ref(inspectorOpen.value ? 'Selected location' : 'Choose a loca
 const mapZoom = ref(3)
 const statusCoordinate = ref('move over map')
 const toast = ref('')
-const showSource = ref(false)
-const showHelp = ref(false)
 
 const dateOpen = ref(false)
 const startDate = ref(appStore.startDate)
@@ -392,9 +372,13 @@ const scenes = ref<PcStacItem[]>([])
 const selectedScene = ref<PcStacItem | null>(null)
 const previewUrl = computed(() => selectedScene.value ? getPreviewUrl(selectedScene.value, previewLayer.value) : '')
 
-const waybackLoading = ref(false)
-const waybackReleases = ref<WaybackRelease[]>([])
-const selectedWayback = ref<number | null>(null)
+// Scene dates derived from NDVI data — these are the exact dates shown in the chart
+const sceneDates = computed(() =>
+  ndviData.value
+    .filter(p => p.value !== null)
+    .map(p => p.date)
+    .sort((a, b) => b.localeCompare(a)),
+)
 
 // Layers panel
 const layersPanelOpen = ref(false)
@@ -551,19 +535,11 @@ function climateGradient(layerId: string): string {
   return CLIMATE_GRADIENTS[layerId] ?? 'linear-gradient(to right, var(--bg-panel-2), var(--accent))'
 }
 
-// Fix: clicking a time-series release now also updates the S2 preview
-function onWaybackClick(release: WaybackRelease) {
-  selectedWayback.value = release.layerNumber
-  const date = release.acquisitionDate ?? release.publishDate
-  if (date) onChartPointClick(date)
-}
-
 let map: L.Map | null = null
 let baseLayer: L.TileLayer | null = null
 let labelLayer: L.TileLayer | null = null
 let marker: L.Marker | null = null
 let sceneRequestId = 0
-let waybackRequestId = 0
 
 const presets = [
   { id: '1y', label: 'Last 12 months', short: '1y' },
@@ -592,10 +568,6 @@ const selectedSceneCloud = computed(() => {
   return Number.isFinite(cloud) ? `${cloud.toFixed(1)}%` : 'unknown'
 })
 
-const waybackStatus = computed(() => {
-  if (waybackLoading.value) return 'loading'
-  return `${waybackReleases.value.length} releases`
-})
 
 function todayIso(): string {
   return new Date().toISOString().slice(0, 10)
@@ -666,7 +638,6 @@ function setSelectedPoint(lon: number, lat: number, name = 'Selected location') 
   }
   updateUrl()
   loadSceneSummary()
-  loadWayback()
   for (const id of activeClimateIds.value) fetchClimate(id)
 }
 
@@ -723,28 +694,6 @@ async function loadSceneSummary() {
   }
 }
 
-async function loadWayback() {
-  if (!inspectorOpen.value) return
-  const requestId = ++waybackRequestId
-  const [lon, lat] = appStore.coordinate
-  waybackLoading.value = true
-  waybackReleases.value = []
-  selectedWayback.value = null
-  try {
-    const layers = await getReleasesAtPoint(lat, lon)
-    const enriched = await Promise.all(layers.slice(0, 10).map(async layer => ({
-      ...layer,
-      acquisitionDate: await getAcquisitionDate(lat, lon, layer.identifier),
-    })))
-    if (requestId !== waybackRequestId) return
-    waybackReleases.value = enriched
-    selectedWayback.value = enriched[0]?.layerNumber ?? null
-  } catch {
-    if (requestId === waybackRequestId) waybackReleases.value = []
-  } finally {
-    if (requestId === waybackRequestId) waybackLoading.value = false
-  }
-}
 
 function onChartPointClick(date: string) {
   appStore.setSelectedDate(date)
@@ -812,11 +761,7 @@ function onDocumentClick(e: MouseEvent) {
 }
 
 function onKeydown(e: KeyboardEvent) {
-  if (e.key === 'Escape') {
-    inspectorOpen.value = false
-    showHelp.value = false
-    showSource.value = false
-  }
+  if (e.key === 'Escape') inspectorOpen.value = false
   if (e.key === '/' && document.activeElement !== searchInput.value) {
     e.preventDefault()
     focusSearch()
@@ -853,7 +798,6 @@ onMounted(() => {
   if (inspectorOpen.value) {
     marker = L.marker([lat, lon], { icon: markerIcon() }).addTo(map)
     loadSceneSummary()
-    loadWayback()
   }
 
   document.addEventListener('click', onDocumentClick, true)
@@ -1295,6 +1239,23 @@ onUnmounted(() => {
   font-weight: 400;
   letter-spacing: 0;
   text-transform: none;
+}
+
+.tag-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.cloud-tag {
+  font-size: 10px;
+  font-family: var(--font-mono);
+  color: var(--accent-2);
+  background: rgba(77, 166, 255, 0.12);
+  border: 1px solid rgba(77, 166, 255, 0.25);
+  border-radius: 4px;
+  padding: 1px 5px;
+  cursor: default;
 }
 
 .segmented {

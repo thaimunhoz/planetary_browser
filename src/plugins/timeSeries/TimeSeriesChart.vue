@@ -1,9 +1,18 @@
 <template>
-  <div ref="containerRef" class="chart-container"></div>
+  <div ref="containerRef" class="chart-container">
+    <div
+      v-if="tooltip.visible"
+      class="chart-tooltip"
+      :style="{ left: tooltip.x + 'px', top: tooltip.y + 'px' }"
+    >
+      <span class="tip-date">{{ tooltip.date }}</span>
+      <span class="tip-value" :style="{ color: seriesColour() }">{{ tooltip.value }}</span>
+    </div>
+  </div>
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted, onUnmounted, watch } from 'vue'
+import { ref, reactive, onMounted, onUnmounted, watch } from 'vue'
 import uPlot from 'uplot'
 import 'uplot/dist/uPlot.min.css'
 import type { TimeSeriesPoint } from '../../types/api'
@@ -37,6 +46,8 @@ const emit = defineEmits<{
 const containerRef = ref<HTMLDivElement | null>(null)
 let uplot: uPlot | null = null
 let resizeObserver: ResizeObserver | null = null
+
+const tooltip = reactive({ visible: false, x: 0, y: 0, date: '', value: '' })
 
 function flagColour(value: string): string {
   return sharedFlagColour(value, props.flagLabels, props.flags)
@@ -162,13 +173,49 @@ function createChart() {
     ],
     hooks: {
       draw: [drawAnnotations, drawBars],
+      setCursor: [
+        (u: uPlot) => {
+          const curLeft = u.cursor.left ?? -1
+          const curTop  = u.cursor.top  ?? -1
+          if (curLeft < 0 || curTop < 0) { tooltip.visible = false; return }
+
+          const hoverTs = u.posToVal(curLeft, 'x')
+          const xs = u.data[0]
+          const ys = u.data[1] as (number | null)[]
+          let nearest = -1
+          let minDist = Infinity
+          for (let i = 0; i < xs.length; i++) {
+            if (ys[i] == null) continue
+            const dist = Math.abs(xs[i] - hoverTs)
+            if (dist < minDist) { minDist = dist; nearest = i }
+          }
+
+          if (nearest < 0 || Math.abs(u.valToPos(xs[nearest], 'x') - curLeft) > 24) {
+            tooltip.visible = false
+            return
+          }
+
+          const overBCR = u.over.getBoundingClientRect()
+          const cBCR    = containerRef.value!.getBoundingClientRect()
+          const ox = overBCR.left - cBCR.left
+          const oy = overBCR.top  - cBCR.top
+
+          const val = ys[nearest]!
+          tooltip.visible = true
+          tooltip.date  = new Date(xs[nearest] * 1000).toISOString().slice(0, 10)
+          tooltip.value = `${typeof val === 'number' ? val.toFixed(2) : val} ${props.unit}`
+          // Flip left if too close to right edge
+          const tipW = 130
+          const raw  = ox + curLeft + 12
+          tooltip.x = raw + tipW > cBCR.width ? ox + curLeft - tipW - 6 : raw
+          tooltip.y = oy + curTop - 38
+        },
+      ],
       ready: [
         (u: uPlot) => {
+          u.over.addEventListener('mouseleave', () => { tooltip.visible = false })
           u.over.addEventListener('click', (e: MouseEvent) => {
-            // u.over spans the full canvas width, so e.offsetX is already canvas-relative
             const clickTs = u.posToVal(e.offsetX, 'x')
-
-            // Find the nearest non-null data point by timestamp distance
             const xs = u.data[0]
             const ys = u.data[1] as (number | null)[]
             let nearest = -1
@@ -186,7 +233,7 @@ function createChart() {
         },
       ],
     },
-    cursor: { show: true, x: false, y: false, drag: { x: false, y: false } },
+    cursor: { show: true, x: true, y: false, drag: { x: false, y: false } },
     select: { show: false, left: 0, top: 0, width: 0, height: 0 },
   }
 
@@ -254,6 +301,35 @@ watch(
 .chart-container {
   width: 100%;
   height: 100%;
-  overflow: hidden;
+  overflow: visible;
+  position: relative;
+}
+
+.chart-tooltip {
+  position: absolute;
+  z-index: 500;
+  pointer-events: none;
+  padding: 5px 9px;
+  background: var(--bg-elevated, #1a2236);
+  border: 1px solid var(--border-strong, #3a4a5c);
+  border-radius: 6px;
+  font-size: 11px;
+  font-family: var(--font-mono, monospace);
+  white-space: nowrap;
+  color: var(--text-primary, #eaeef6);
+  box-shadow: 0 4px 12px rgba(0,0,0,0.4);
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.tip-date {
+  color: var(--text-secondary, #8a9bb0);
+  font-size: 10px;
+}
+
+.tip-value {
+  font-size: 12px;
+  font-weight: 600;
 }
 </style>
