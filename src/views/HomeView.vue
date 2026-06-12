@@ -122,7 +122,7 @@
         </button>
       </div>
 
-      <aside class="inspector" :class="{ open: inspectorOpen }" aria-label="Location inspector">
+      <aside ref="inspectorEl" class="inspector" :class="{ open: inspectorOpen }" aria-label="Location inspector">
         <div class="inspector-head">
           <div>
             <div class="place">{{ placeName }}</div>
@@ -195,27 +195,12 @@
             <!-- Satellite imagery -->
             <template v-else>
               <div v-if="sceneLoading" class="image-skeleton"></div>
-              <div
-                v-else-if="previewUrl"
-                class="preview-tile"
-                @wheel.prevent="onImageWheel"
-                @mousedown="onImageMouseDown"
-              >
-                <img
-                  :src="previewUrl"
-                  alt="Sentinel-2 preview for the selected location"
-                  :style="{
-                    transform: `translate(${imgPanX}px, ${imgPanY}px)`,
-                    cursor: 'grab',
-                  }"
-                  @dragstart.prevent
-                />
-                <!-- Center crosshair marking the selected point -->
-                <div class="scene-crosshair">
-                  <div class="crosshair-h"></div>
-                  <div class="crosshair-v"></div>
-                  <div class="crosshair-dot"></div>
-                </div>
+              <div v-else-if="selectedScene" class="preview-tile">
+                <div
+                  ref="previewMapEl"
+                  class="preview-map"
+                  aria-label="Sentinel-2 preview for the selected location"
+                ></div>
                 <div class="img-zoom-controls">
                   <button @click.stop="zoomImageIn"    title="Zoom in (fetch closer tile)">＋</button>
                   <button @click.stop="zoomImageReset" title="Reset zoom">⊡</button>
@@ -322,7 +307,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted, reactive, ref, watch } from 'vue'
+import { computed, nextTick, onMounted, onUnmounted, reactive, ref, watch } from 'vue'
 import L from 'leaflet'
 import 'leaflet/dist/leaflet.css'
 import { useAppStore } from '../stores/app'
@@ -332,7 +317,7 @@ import TimeSeriesChart from '../plugins/timeSeries/TimeSeriesChart.vue'
 import { BASEMAPS, getBasemap, type BasemapId } from '../utils/basemap'
 import { serialiseUrl } from '../utils/url'
 import {
-  getPreviewUrl,
+  getTileUrl,
   searchSentinel2Items,
   stacItemCloudCover,
   stacItemDate,
@@ -349,6 +334,8 @@ import type { Flags, FlagLabels } from '../types/state'
 
 const appStore = useAppStore()
 const mapEl = ref<HTMLDivElement | null>(null)
+const inspectorEl = ref<HTMLElement | null>(null)
+const previewMapEl = ref<HTMLDivElement | null>(null)
 const searchInput = ref<HTMLInputElement | null>(null)
 const datePopoverRef = ref<HTMLElement | null>(null)
 
@@ -373,13 +360,8 @@ const previewLayer = ref<string>('TRUE-COLOR')
 const sceneLoading = ref(false)
 const scenes = ref<PcStacItem[]>([])
 const selectedScene = ref<PcStacItem | null>(null)
-const previewTileZoom = ref(14) // Web Mercator zoom; drives actual tile fetch (10–18)
-
-const previewUrl = computed(() => {
-  if (!selectedScene.value) return ''
-  const [lon, lat] = appStore.coordinate
-  return getPreviewUrl(selectedScene.value, previewLayer.value, [lon, lat], previewTileZoom.value)
-})
+const PREVIEW_DEFAULT_ZOOM = 16
+const previewTileZoom = ref(PREVIEW_DEFAULT_ZOOM)
 
 // Scene dates derived from NDVI data — these are the exact dates shown in the chart
 const sceneDates = computed(() =>
@@ -454,41 +436,23 @@ const maskClouds = ref(true)
 const ndviSource = ref(getDataSource('S2_NDVI'))
 const { data: ndviData, loading: ndviLoading, error: ndviError } = useTimeSeries(ndviSource, maskClouds)
 
-// Image pan (CSS translate only; zoom is handled by fetching a different tile zoom level)
-const imgPanX = ref(0)
-const imgPanY = ref(0)
-
-// Reset pan (not zoom) when a new scene/location is loaded
 watch(() => appStore.coordinate, () => {
-  previewTileZoom.value = 14
-  imgPanX.value = 0
-  imgPanY.value = 0
+  previewTileZoom.value = PREVIEW_DEFAULT_ZOOM
+  updatePreviewMarker()
+  centerPreviewMap(PREVIEW_DEFAULT_ZOOM)
 })
 
-function zoomImageIn()  { previewTileZoom.value = Math.min(previewTileZoom.value + 1, 18) }
-function zoomImageOut() { previewTileZoom.value = Math.max(previewTileZoom.value - 1, 10) }
-function zoomImageReset() { previewTileZoom.value = 14; imgPanX.value = 0; imgPanY.value = 0 }
-
-function onImageWheel(e: WheelEvent) {
-  if (e.deltaY < 0) zoomImageIn()
-  else zoomImageOut()
+function zoomImageIn() {
+  previewMap?.zoomIn()
 }
 
-function onImageMouseDown(e: MouseEvent) {
-  const startX = e.clientX
-  const startY = e.clientY
-  const startPanX = imgPanX.value
-  const startPanY = imgPanY.value
-  const onMove = (ev: MouseEvent) => {
-    imgPanX.value = startPanX + (ev.clientX - startX)
-    imgPanY.value = startPanY + (ev.clientY - startY)
-  }
-  const onUp = () => {
-    window.removeEventListener('mousemove', onMove)
-    window.removeEventListener('mouseup', onUp)
-  }
-  window.addEventListener('mousemove', onMove)
-  window.addEventListener('mouseup', onUp)
+function zoomImageOut() {
+  previewMap?.zoomOut()
+}
+
+function zoomImageReset() {
+  previewTileZoom.value = PREVIEW_DEFAULT_ZOOM
+  centerPreviewMap(PREVIEW_DEFAULT_ZOOM)
 }
 
 // Climate palette selection (per layer id → palette id)
@@ -512,6 +476,18 @@ const activeClimateImageryLayer = computed(() =>
   previewLayer.value.startsWith('climate:')
     ? CLIMATE_LAYERS.find(l => l.imageryMode === previewLayer.value) ?? null
     : null,
+)
+
+watch(
+  [selectedScene, previewLayer, sceneLoading, activeClimateImageryLayer],
+  () => {
+    if (sceneLoading.value || !selectedScene.value || activeClimateImageryLayer.value) {
+      destroyPreviewMap()
+      return
+    }
+    updatePreviewImagery()
+  },
+  { flush: 'post' },
 )
 
 // Value for the selected date from fetched climate data
@@ -553,7 +529,12 @@ let map: L.Map | null = null
 let baseLayer: L.TileLayer | null = null
 let labelLayer: L.TileLayer | null = null
 let marker: L.Marker | null = null
+let previewMap: L.Map | null = null
+let previewTileLayer: L.TileLayer | null = null
+let previewMarker: L.Marker | null = null
+let previewResizeObserver: ResizeObserver | null = null
 let sceneRequestId = 0
+let previewTileRequestId = 0
 
 const presets = [
   { id: '1y', label: 'Last 12 months', short: '1y' },
@@ -641,6 +622,39 @@ function markerIcon() {
   })
 }
 
+function previewMarkerIcon() {
+  return L.divIcon({
+    className: 'tp-preview-marker',
+    html: '<span></span>',
+    iconSize: [18, 18],
+    iconAnchor: [9, 9],
+  })
+}
+
+function isDesktopInspector() {
+  return window.matchMedia('(min-width: 861px)').matches
+}
+
+function visibleBasemapCenterFor(lon: number, lat: number, zoom: number): L.LatLngExpression {
+  if (!map || !inspectorOpen.value || !isDesktopInspector()) return [lat, lon]
+
+  const size = map.getSize()
+  const inspectorWidth = inspectorEl.value?.getBoundingClientRect().width ?? size.x / 2
+  const visibleWidth = Math.max(1, size.x - inspectorWidth)
+  const desiredPoint = L.point(visibleWidth / 2, size.y / 2)
+  const containerCenter = L.point(size.x / 2, size.y / 2)
+  const selectedPoint = map.project([lat, lon], zoom)
+  const targetCenterPoint = selectedPoint.add(containerCenter.subtract(desiredPoint))
+  return map.unproject(targetCenterPoint, zoom)
+}
+
+function centerMainMapOnPoint(lon: number, lat: number, zoom = map?.getZoom() ?? 12, animate = true) {
+  if (!map) return
+  const center = visibleBasemapCenterFor(lon, lat, zoom)
+  if (animate) map.flyTo(center, zoom, { duration: 0.45 })
+  else map.setView(center, zoom)
+}
+
 function setSelectedPoint(lon: number, lat: number, name = 'Selected location') {
   appStore.setCoordinate(lon, lat)
   placeName.value = name
@@ -650,9 +664,99 @@ function setSelectedPoint(lon: number, lat: number, name = 'Selected location') 
     if (marker) marker.setLatLng([lat, lon])
     else marker = L.marker([lat, lon], { icon: markerIcon() }).addTo(map)
   }
+  centerMainMapOnPoint(lon, lat, Math.max(map?.getZoom() ?? 12, 12))
   updateUrl()
   loadSceneSummary()
   for (const id of activeClimateIds.value) fetchClimate(id)
+}
+
+async function ensurePreviewMap() {
+  await nextTick()
+  if (!previewMapEl.value || previewMap) return
+
+  const [lon, lat] = appStore.coordinate
+  previewMap = L.map(previewMapEl.value, {
+    attributionControl: false,
+    zoomControl: false,
+    minZoom: 10,
+    maxZoom: 18,
+    zoomSnap: 1,
+    zoomDelta: 1,
+    scrollWheelZoom: true,
+    worldCopyJump: true,
+  }).setView([lat, lon], previewTileZoom.value)
+
+  L.DomEvent.disableClickPropagation(previewMapEl.value)
+  L.DomEvent.disableScrollPropagation(previewMapEl.value)
+
+  previewMarker = L.marker([lat, lon], {
+    icon: previewMarkerIcon(),
+    interactive: false,
+    keyboard: false,
+  }).addTo(previewMap)
+
+  previewMap.on('zoomend', () => {
+    if (previewMap) previewTileZoom.value = previewMap.getZoom()
+  })
+
+  previewResizeObserver = new ResizeObserver(() => previewMap?.invalidateSize())
+  previewResizeObserver.observe(previewMapEl.value)
+}
+
+function updatePreviewMarker() {
+  const [lon, lat] = appStore.coordinate
+  previewMarker?.setLatLng([lat, lon])
+}
+
+function centerPreviewMap(zoom = previewTileZoom.value) {
+  if (!previewMap) return
+  const [lon, lat] = appStore.coordinate
+  previewMap.setView([lat, lon], zoom)
+  previewTileZoom.value = zoom
+  updatePreviewMarker()
+}
+
+async function updatePreviewImagery() {
+  if (!selectedScene.value || activeClimateImageryLayer.value || sceneLoading.value) return
+
+  const requestId = ++previewTileRequestId
+  await ensurePreviewMap()
+  if (!previewMap || !selectedScene.value) return
+
+  try {
+    const tileUrl = await getTileUrl(selectedScene.value, previewLayer.value)
+    if (requestId !== previewTileRequestId || !previewMap) return
+
+    if (previewTileLayer) {
+      previewTileLayer.setUrl(tileUrl)
+    } else {
+      previewTileLayer = L.tileLayer(tileUrl, {
+        minZoom: 10,
+        maxZoom: 18,
+        maxNativeZoom: 18,
+        keepBuffer: 3,
+        updateWhenIdle: false,
+      }).addTo(previewMap)
+    }
+
+    updatePreviewMarker()
+    previewMarker?.bringToFront()
+    centerPreviewMap(previewTileZoom.value)
+  } catch (e) {
+    if (requestId === previewTileRequestId) {
+      showToast(e instanceof Error ? e.message : String(e))
+    }
+  }
+}
+
+function destroyPreviewMap() {
+  previewTileRequestId++
+  previewResizeObserver?.disconnect()
+  previewResizeObserver = null
+  previewMap?.remove()
+  previewMap = null
+  previewTileLayer = null
+  previewMarker = null
 }
 
 function closeInspector() {
@@ -662,6 +766,12 @@ function closeInspector() {
   url.searchParams.delete('lat')
   url.searchParams.delete('selected')
   history.replaceState(null, '', `${url.pathname}${url.search}${url.hash}`)
+}
+
+function recenterSelectedPointInBasemap(animate = false) {
+  if (!inspectorOpen.value) return
+  const [lon, lat] = appStore.coordinate
+  centerMainMapOnPoint(lon, lat, Math.max(map?.getZoom() ?? 12, 12), animate)
 }
 
 function updateUrl() {
@@ -724,7 +834,6 @@ async function runSearch() {
     const second = parseFloat(coordMatch[2])
     const lat = Math.abs(first) <= 90 ? first : second
     const lon = Math.abs(first) <= 90 ? second : first
-    map?.flyTo([lat, lon], map ? Math.max(map.getZoom(), 12) : 12)
     setSelectedPoint(lon, lat, 'Searched coordinate')
     return
   }
@@ -740,7 +849,6 @@ async function runSearch() {
     }
     const lat = parseFloat(first.lat)
     const lon = parseFloat(first.lon)
-    map?.flyTo([lat, lon], 12)
     setSelectedPoint(lon, lat, first.display_name.split(',').slice(0, 2).join(', '))
   } catch {
     showToast('Search failed.')
@@ -775,11 +883,17 @@ function onDocumentClick(e: MouseEvent) {
 }
 
 function onKeydown(e: KeyboardEvent) {
-  if (e.key === 'Escape') inspectorOpen.value = false
+  if (e.key === 'Escape') closeInspector()
   if (e.key === '/' && document.activeElement !== searchInput.value) {
     e.preventDefault()
     focusSearch()
   }
+}
+
+function onWindowResize() {
+  map?.invalidateSize()
+  previewMap?.invalidateSize()
+  recenterSelectedPointInBasemap(false)
 }
 
 onMounted(() => {
@@ -800,7 +914,6 @@ onMounted(() => {
 
   map.on('click', (e: L.LeafletMouseEvent) => {
     const { lng, lat } = e.latlng.wrap()
-    map?.flyTo([lat, lng], map ? Math.max(map.getZoom(), 12) : 12, { duration: 0.45 })
     setSelectedPoint(lng, lat)
   })
   map.on('mousemove', (e: L.LeafletMouseEvent) => {
@@ -811,16 +924,20 @@ onMounted(() => {
 
   if (inspectorOpen.value) {
     marker = L.marker([lat, lon], { icon: markerIcon() }).addTo(map)
+    centerMainMapOnPoint(lon, lat, 13, false)
     loadSceneSummary()
   }
 
   document.addEventListener('click', onDocumentClick, true)
   document.addEventListener('keydown', onKeydown)
+  window.addEventListener('resize', onWindowResize)
 })
 
 onUnmounted(() => {
   document.removeEventListener('click', onDocumentClick, true)
   document.removeEventListener('keydown', onKeydown)
+  window.removeEventListener('resize', onWindowResize)
+  destroyPreviewMap()
   map?.remove()
   map = null
 })
@@ -1301,13 +1418,29 @@ onUnmounted(() => {
   background: var(--bg-base);
 }
 
-.preview-tile img {
-  width: 100%;
-  height: 100%;
-  object-fit: cover;
-  transform-origin: center;
-  transition: transform 60ms linear;
-  user-select: none;
+.preview-map {
+  position: absolute;
+  inset: 0;
+  background: var(--bg-base);
+  cursor: grab;
+}
+
+.preview-map:active {
+  cursor: grabbing;
+}
+
+:deep(.tp-preview-marker span) {
+  display: block;
+  width: 18px;
+  height: 18px;
+  border: 2px solid var(--accent);
+  border-radius: 50%;
+  background: rgba(54, 226, 164, 0.22);
+  box-shadow: 0 0 12px rgba(54, 226, 164, 0.85);
+}
+
+:deep(.preview-map .leaflet-tile-container) {
+  will-change: transform;
 }
 
 .img-zoom-controls {
