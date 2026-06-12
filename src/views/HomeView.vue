@@ -373,7 +373,15 @@ const previewLayer = ref<string>('TRUE-COLOR')
 const sceneLoading = ref(false)
 const scenes = ref<PcStacItem[]>([])
 const selectedScene = ref<PcStacItem | null>(null)
-const previewUrl = computed(() => selectedScene.value ? getPreviewUrl(selectedScene.value, previewLayer.value) : '')
+const previewUrl = computed(() => {
+  if (!selectedScene.value) return ''
+  const [lon, lat] = appStore.coordinate
+  // ~2.5 km half-span at any latitude; keeps the selected point exactly at image centre
+  const latD = 0.022
+  const lonD = 0.022
+  const bbox: [number, number, number, number] = [lon - lonD, lat - latD, lon + lonD, lat + latD]
+  return getPreviewUrl(selectedScene.value, previewLayer.value, bbox)
+})
 
 // Scene dates derived from NDVI data — these are the exact dates shown in the chart
 const sceneDates = computed(() =>

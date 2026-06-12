@@ -266,10 +266,17 @@ export async function getTileUrl(item: PcStacItem, layerId: string): Promise<str
   return tile
 }
 
-export function getPreviewUrl(item: PcStacItem, layerId: string): string {
+export function getPreviewUrl(
+  item: PcStacItem,
+  layerId: string,
+  bbox?: [number, number, number, number],
+): string {
   const params = itemParams(item)
   applyLayerParams(params, layerId)
   params.set('width', '512')
   params.set('height', '512')
+  if (bbox) {
+    params.set('bbox', bbox.map(v => v.toFixed(6)).join(','))
+  }
   return `${PC_TILER_BASE}/item/preview.png?${params.toString()}`
 }
