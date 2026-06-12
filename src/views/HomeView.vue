@@ -1,16 +1,13 @@
 <template>
   <div class="tp-shell">
     <header class="topbar">
-      <div class="brand" aria-label="AgriView">
+      <div class="brand" aria-label="Satellite Time Series Browser">
         <svg viewBox="0 0 32 32" aria-hidden="true">
           <circle cx="16" cy="16" r="6.5" fill="var(--accent)" />
           <ellipse cx="16" cy="16" rx="13.5" ry="6" stroke="var(--accent)" stroke-width="1.6" opacity=".82" transform="rotate(-28 16 16)" />
           <circle cx="27" cy="9.5" r="1.8" fill="var(--accent-2)" />
         </svg>
-        <div>
-          <div class="brand-name">Agri<span>View</span></div>
-          <div class="brand-sub">Satellite time series browser</div>
-        </div>
+        <div class="brand-title">Satellite Time Series Browser</div>
       </div>
 
       <form class="search" @submit.prevent="runSearch">
@@ -26,7 +23,7 @@
 
       <div class="date-range" ref="datePopoverRef">
         <button class="date-pill" type="button" @click="dateOpen = !dateOpen">
-          <span class="pill-icon">cal</span>
+          <span class="pill-icon">Period</span>
           <span class="mono">{{ startDate }} -> {{ endDate }}</span>
           <span>⌄</span>
         </button>
@@ -213,6 +210,12 @@
                   }"
                   @dragstart.prevent
                 />
+                <!-- Center crosshair marking the selected point -->
+                <div class="scene-crosshair">
+                  <div class="crosshair-h"></div>
+                  <div class="crosshair-v"></div>
+                  <div class="crosshair-dot"></div>
+                </div>
                 <div class="img-zoom-controls">
                   <button @click.stop="imgZoom = Math.min(imgZoom * 1.4, 8)" title="Zoom in">＋</button>
                   <button @click.stop="imgZoom = 1; imgPanX = 0; imgPanY = 0" title="Reset">⊡</button>
@@ -846,28 +849,20 @@ onUnmounted(() => {
   display: flex;
   align-items: center;
   gap: 10px;
-  min-width: 210px;
+  white-space: nowrap;
 }
 
 .brand svg {
-  width: 28px;
-  height: 28px;
+  width: 26px;
+  height: 26px;
+  flex-shrink: 0;
 }
 
-.brand-name {
-  font-size: 15px;
-  font-weight: 700;
-  letter-spacing: 0.04em;
-}
-
-.brand-name span { color: var(--accent); }
-
-.brand-sub {
-  margin-top: 1px;
-  color: var(--text-muted);
-  font-size: 10px;
-  letter-spacing: 0.13em;
-  text-transform: uppercase;
+.brand-title {
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: 0.03em;
+  color: var(--text-primary);
 }
 
 .search {
@@ -1288,7 +1283,7 @@ onUnmounted(() => {
 .image-skeleton {
   position: relative;
   width: 100%;
-  aspect-ratio: 1.45;
+  aspect-ratio: 2.4;
   overflow: hidden;
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
@@ -1334,6 +1329,47 @@ onUnmounted(() => {
   background: rgba(54, 226, 164, 0.18);
   border-color: var(--accent);
   color: var(--accent);
+}
+
+.scene-crosshair {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  z-index: 5;
+}
+
+.crosshair-h,
+.crosshair-v {
+  position: absolute;
+  background: rgba(54, 226, 164, 0.55);
+}
+
+.crosshair-h {
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  width: 28px;
+  height: 1px;
+}
+
+.crosshair-v {
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  width: 1px;
+  height: 28px;
+}
+
+.crosshair-dot {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--accent);
+  box-shadow: 0 0 8px var(--accent);
 }
 
 .caption {
