@@ -281,6 +281,7 @@ export function getPreviewUrl(
   item: PcStacItem,
   layerId: string,
   coord?: [number, number], // [lon, lat] of the clicked point
+  tileZoom = 14,            // Web Mercator zoom level (10–18)
 ): string {
   const params = itemParams(item)
   applyLayerParams(params, layerId)
@@ -289,7 +290,7 @@ export function getPreviewUrl(
     // Request the specific XYZ tile that contains the clicked coordinate.
     // @2x returns a 512×512 tile so the crosshair at centre is exact.
     const [lon, lat] = coord
-    const [z, x, y] = latLonToTile(lat, lon, 14)
+    const [z, x, y] = latLonToTile(lat, lon, tileZoom)
     return `${PC_TILER_BASE}/item/tiles/${z}/${x}/${y}@2x?${params.toString()}`
   }
 

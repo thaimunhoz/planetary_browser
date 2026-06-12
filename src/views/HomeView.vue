@@ -205,8 +205,8 @@
                   :src="previewUrl"
                   alt="Sentinel-2 preview for the selected location"
                   :style="{
-                    transform: `scale(${imgZoom}) translate(${imgPanX}px, ${imgPanY}px)`,
-                    cursor: imgZoom > 1 ? 'grab' : 'zoom-in',
+                    transform: `translate(${imgPanX}px, ${imgPanY}px)`,
+                    cursor: 'grab',
                   }"
                   @dragstart.prevent
                 />
@@ -217,9 +217,9 @@
                   <div class="crosshair-dot"></div>
                 </div>
                 <div class="img-zoom-controls">
-                  <button @click.stop="imgZoom = Math.min(imgZoom * 1.4, 8)" title="Zoom in">＋</button>
-                  <button @click.stop="imgZoom = 1; imgPanX = 0; imgPanY = 0" title="Reset">⊡</button>
-                  <button @click.stop="imgZoom = Math.max(imgZoom / 1.4, 1); if (imgZoom === 1) { imgPanX = 0; imgPanY = 0 }" title="Zoom out">－</button>
+                  <button @click.stop="zoomImageIn"    title="Zoom in (fetch closer tile)">＋</button>
+                  <button @click.stop="zoomImageReset" title="Reset zoom">⊡</button>
+                  <button @click.stop="zoomImageOut"   title="Zoom out (fetch wider tile)">－</button>
                 </div>
                 <span class="caption mono">{{ selectedSceneDate }} · cloud {{ selectedSceneCloud }}</span>
               </div>
@@ -373,10 +373,12 @@ const previewLayer = ref<string>('TRUE-COLOR')
 const sceneLoading = ref(false)
 const scenes = ref<PcStacItem[]>([])
 const selectedScene = ref<PcStacItem | null>(null)
+const previewTileZoom = ref(14) // Web Mercator zoom; drives actual tile fetch (10–18)
+
 const previewUrl = computed(() => {
   if (!selectedScene.value) return ''
   const [lon, lat] = appStore.coordinate
-  return getPreviewUrl(selectedScene.value, previewLayer.value, [lon, lat])
+  return getPreviewUrl(selectedScene.value, previewLayer.value, [lon, lat], previewTileZoom.value)
 })
 
 // Scene dates derived from NDVI data — these are the exact dates shown in the chart
@@ -452,19 +454,24 @@ const maskClouds = ref(true)
 const ndviSource = ref(getDataSource('S2_NDVI'))
 const { data: ndviData, loading: ndviLoading, error: ndviError } = useTimeSeries(ndviSource, maskClouds)
 
-// Image zoom / pan
-const imgZoom = ref(1)
+// Image pan (CSS translate only; zoom is handled by fetching a different tile zoom level)
 const imgPanX = ref(0)
 const imgPanY = ref(0)
 
-watch(previewUrl, () => {
-  imgZoom.value = 1
+// Reset pan (not zoom) when a new scene/location is loaded
+watch(() => appStore.coordinate, () => {
+  previewTileZoom.value = 14
   imgPanX.value = 0
   imgPanY.value = 0
 })
 
+function zoomImageIn()  { previewTileZoom.value = Math.min(previewTileZoom.value + 1, 18) }
+function zoomImageOut() { previewTileZoom.value = Math.max(previewTileZoom.value - 1, 10) }
+function zoomImageReset() { previewTileZoom.value = 14; imgPanX.value = 0; imgPanY.value = 0 }
+
 function onImageWheel(e: WheelEvent) {
-  imgZoom.value = Math.max(1, Math.min(8, imgZoom.value * (e.deltaY < 0 ? 1.15 : 1 / 1.15)))
+  if (e.deltaY < 0) zoomImageIn()
+  else zoomImageOut()
 }
 
 function onImageMouseDown(e: MouseEvent) {
@@ -473,8 +480,8 @@ function onImageMouseDown(e: MouseEvent) {
   const startPanX = imgPanX.value
   const startPanY = imgPanY.value
   const onMove = (ev: MouseEvent) => {
-    imgPanX.value = startPanX + (ev.clientX - startX) / imgZoom.value
-    imgPanY.value = startPanY + (ev.clientY - startY) / imgZoom.value
+    imgPanX.value = startPanX + (ev.clientX - startX)
+    imgPanY.value = startPanY + (ev.clientY - startY)
   }
   const onUp = () => {
     window.removeEventListener('mousemove', onMove)
