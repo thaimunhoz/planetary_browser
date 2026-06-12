@@ -275,8 +275,13 @@ export function getPreviewUrl(
   applyLayerParams(params, layerId)
   params.set('width', '512')
   params.set('height', '512')
+
   if (bbox) {
-    params.set('bbox', bbox.map(v => v.toFixed(6)).join(','))
+    // /item/crop/{minx},{miny},{maxx},{maxy}.png crops the scene to the exact bbox,
+    // so the clicked point (bbox centre) lands at the image centre.
+    const [minx, miny, maxx, maxy] = bbox.map(v => v.toFixed(6))
+    return `${PC_TILER_BASE}/item/crop/${minx},${miny},${maxx},${maxy}.png?${params.toString()}`
   }
+
   return `${PC_TILER_BASE}/item/preview.png?${params.toString()}`
 }
