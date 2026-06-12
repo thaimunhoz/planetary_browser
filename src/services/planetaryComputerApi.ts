@@ -266,22 +266,34 @@ export async function getTileUrl(item: PcStacItem, layerId: string): Promise<str
   return tile
 }
 
+/** Convert WGS-84 lat/lon to Web Mercator tile indices at the given zoom. */
+function latLonToTile(lat: number, lon: number, zoom: number): [number, number, number] {
+  const z = zoom
+  const x = Math.floor((lon + 180) / 360 * (1 << z))
+  const latRad = (lat * Math.PI) / 180
+  const y = Math.floor(
+    (1 - Math.log(Math.tan(latRad) + 1 / Math.cos(latRad)) / Math.PI) / 2 * (1 << z),
+  )
+  return [z, x, y]
+}
+
 export function getPreviewUrl(
   item: PcStacItem,
   layerId: string,
-  bbox?: [number, number, number, number],
+  coord?: [number, number], // [lon, lat] of the clicked point
 ): string {
   const params = itemParams(item)
   applyLayerParams(params, layerId)
-  params.set('width', '512')
-  params.set('height', '512')
 
-  if (bbox) {
-    // /item/crop/{minx},{miny},{maxx},{maxy}.png crops the scene to the exact bbox,
-    // so the clicked point (bbox centre) lands at the image centre.
-    const [minx, miny, maxx, maxy] = bbox.map(v => v.toFixed(6))
-    return `${PC_TILER_BASE}/item/crop/${minx},${miny},${maxx},${maxy}.png?${params.toString()}`
+  if (coord) {
+    // Request the specific XYZ tile that contains the clicked coordinate.
+    // @2x returns a 512×512 tile so the crosshair at centre is exact.
+    const [lon, lat] = coord
+    const [z, x, y] = latLonToTile(lat, lon, 14)
+    return `${PC_TILER_BASE}/item/tiles/${z}/${x}/${y}@2x?${params.toString()}`
   }
 
+  params.set('width', '512')
+  params.set('height', '512')
   return `${PC_TILER_BASE}/item/preview.png?${params.toString()}`
 }
